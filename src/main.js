@@ -326,7 +326,7 @@ const browserOps = {
     await wc.insertText(text);
     if (submit) {
       wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-      wc.sendInputEvent({ type: 'char', keyCode: '' });
+      wc.sendInputEvent({ type: 'char', keyCode: '\r' });
       wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
     }
     return { ok: true, typed: text.slice(0, 80), submitted: !!submit };
