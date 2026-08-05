@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "package": "electron-packager . MimiTerm --overwrite --no-asar --icon=assets/icon.icns --extend-info=build/extend-info.plist --out=dist"
+    "package": "electron-packager . MimiTerm --overwrite --no-asar --icon=assets/icon.icns --extend-info=build/extend-info.plist --out=dist",
+    "install-app": "rsync -a --delete dist/MimiTerm-darwin-arm64/MimiTerm.app/ /Applications/MimiTerm.app/",
+    "deploy": "npm run package && npm run install-app"
   },
   "license": "MIT",
   "devDependencies": {
