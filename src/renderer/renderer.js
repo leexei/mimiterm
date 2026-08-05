@@ -34,6 +34,10 @@ function renderGroup(group) {
 
   const header = document.createElement('div');
   header.className = 'group-header';
+  header.draggable = true;
+  header.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/group-id', group.id);
+  });
   header.innerHTML = `<svg class="chevron" viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4 6l4 4 4-4z"/></svg>`;
 
   const name = document.createElement('span');
@@ -77,15 +81,31 @@ function renderGroup(group) {
   }
   groupEl.appendChild(tabsEl);
 
-  // drop target: タブをこのグループへ移動
+  // drop target: タブ移動（グループへ）/ グループ並び替え の両対応
   groupEl.addEventListener('dragover', (e) => {
     e.preventDefault();
-    groupEl.classList.add('drag-over');
+    if (e.dataTransfer.types.includes('text/group-id')) {
+      const rect = groupEl.getBoundingClientRect();
+      const before = e.clientY - rect.top < rect.height / 2;
+      groupEl.classList.toggle('drop-before', before);
+      groupEl.classList.toggle('drop-after', !before);
+      groupEl.classList.remove('drag-over');
+    } else {
+      groupEl.classList.add('drag-over');
+    }
   });
-  groupEl.addEventListener('dragleave', () => groupEl.classList.remove('drag-over'));
+  groupEl.addEventListener('dragleave', () =>
+    groupEl.classList.remove('drag-over', 'drop-before', 'drop-after')
+  );
   groupEl.addEventListener('drop', (e) => {
     e.preventDefault();
-    groupEl.classList.remove('drag-over');
+    const before = groupEl.classList.contains('drop-before');
+    groupEl.classList.remove('drag-over', 'drop-before', 'drop-after');
+    const draggedGroupId = e.dataTransfer.getData('text/group-id');
+    if (draggedGroupId) {
+      moveGroupRelative(draggedGroupId, group, before);
+      return;
+    }
     const tabId = e.dataTransfer.getData('text/tab-id');
     const tab = state.tabs.find((t) => t.id === tabId);
     if (tab && tab.groupId !== group.id) {
@@ -96,6 +116,16 @@ function renderGroup(group) {
   });
 
   return groupEl;
+}
+
+function moveGroupRelative(draggedId, targetGroup, before) {
+  const dragged = state.groups.find((g) => g.id === draggedId);
+  if (!dragged || dragged.id === targetGroup.id) return;
+  state.groups = state.groups.filter((g) => g.id !== draggedId);
+  const idx = state.groups.findIndex((g) => g.id === targetGroup.id) + (before ? 0 : 1);
+  state.groups.splice(idx, 0, dragged);
+  save();
+  render();
 }
 
 function renderTab(tab) {
@@ -158,10 +188,13 @@ function renderTab(tab) {
   });
 
   // タブ上へのドロップ = 並び替え（マウス位置で前後どちらに挿すか決める）
+  // グループのドラッグ中はここでは扱わず、親グループのハンドラに任せる
   tabEl.addEventListener('dragover', (e) => {
+    if (e.dataTransfer.types.includes('text/group-id')) return;
     e.preventDefault();
     e.stopPropagation();
-    const before = e.offsetY < tabEl.offsetHeight / 2;
+    const rect = tabEl.getBoundingClientRect();
+    const before = e.clientY - rect.top < rect.height / 2;
     tabEl.classList.toggle('drop-before', before);
     tabEl.classList.toggle('drop-after', !before);
   });

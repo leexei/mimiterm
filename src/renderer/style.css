@@ -165,11 +165,13 @@ html, body, #app {
   opacity: 0.35;
 }
 
-.tab.drop-before {
+.tab.drop-before,
+.group.drop-before {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-.tab.drop-after {
+.tab.drop-after,
+.group.drop-after {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
