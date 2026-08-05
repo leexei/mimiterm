@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld('mimi', {
   onPtyExit: (cb) => ipcRenderer.on('pty:exit', (_e, tabId) => cb(tabId)),
   onClaudeSessions: (cb) => ipcRenderer.on('claude:sessions', (_e, sessions) => cb(sessions)),
   onStateReload: (cb) => ipcRenderer.on('state:reload', (_e, state) => cb(state)),
+  browserAttached: (webContentsId) => ipcRenderer.send('browser:attached', webContentsId),
+  onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
 });

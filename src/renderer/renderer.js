@@ -963,6 +963,16 @@ function renderQuickbar(force = false) {
   add.title = 'クイックコマンドを追加';
   add.addEventListener('click', openQuickAddModal);
   bar.appendChild(add);
+
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  bar.appendChild(spacer);
+  const browserBtn = document.createElement('button');
+  browserBtn.className = 'qc-btn';
+  browserBtn.textContent = '🌐';
+  browserBtn.title = 'ブラウザペインを開く/閉じる';
+  browserBtn.addEventListener('click', toggleBrowserPane);
+  bar.appendChild(browserBtn);
 }
 
 function openQuickAddModal() {
@@ -1012,6 +1022,103 @@ function openQuickAddModal() {
   cmdInput.focus();
 }
 
+// ---------- 埋め込みブラウザペイン ----------
+
+const browserPane = document.getElementById('browser-pane');
+const browserDivider = document.getElementById('browser-divider');
+const webviewEl = document.getElementById('bw-view');
+const urlInput = document.getElementById('bw-url');
+
+function browserSettings() {
+  state.settings = state.settings || {};
+  return state.settings.browser || {};
+}
+
+function saveBrowserSettings(patch) {
+  state.settings.browser = { ...browserSettings(), ...patch };
+  save();
+}
+
+function openBrowserPane(url) {
+  browserPane.classList.remove('hidden');
+  browserDivider.classList.remove('hidden');
+  const width = browserSettings().width;
+  if (width) browserPane.style.width = `${width}px`;
+  const target = url || browserSettings().url || 'https://www.google.com';
+  if (url || !webviewEl.getAttribute('src')) webviewEl.setAttribute('src', target);
+  saveBrowserSettings({ visible: true });
+}
+
+function closeBrowserPane() {
+  browserPane.classList.add('hidden');
+  browserDivider.classList.add('hidden');
+  saveBrowserSettings({ visible: false });
+}
+
+function toggleBrowserPane() {
+  if (browserPane.classList.contains('hidden')) openBrowserPane();
+  else closeBrowserPane();
+}
+
+webviewEl.addEventListener('dom-ready', () => {
+  window.mimi.browserAttached(webviewEl.getWebContentsId());
+});
+webviewEl.addEventListener('did-navigate', (e) => {
+  urlInput.value = e.url;
+  saveBrowserSettings({ url: e.url });
+});
+webviewEl.addEventListener('did-navigate-in-page', (e) => {
+  urlInput.value = e.url;
+  saveBrowserSettings({ url: e.url });
+});
+
+document.getElementById('bw-back').addEventListener('click', () => webviewEl.goBack());
+document.getElementById('bw-fwd').addEventListener('click', () => webviewEl.goForward());
+document.getElementById('bw-reload').addEventListener('click', () => webviewEl.reload());
+document.getElementById('bw-close').addEventListener('click', closeBrowserPane);
+urlInput.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key !== 'Enter') return;
+  let url = urlInput.value.trim();
+  if (!url) return;
+  if (!/^https?:\/\//.test(url)) url = `https://${url}`;
+  webviewEl.setAttribute('src', url);
+});
+
+// 選択テキストをアクティブタブのClaude入力欄へ引用として注入する（送信はしない）
+document.getElementById('bw-ask').addEventListener('click', async () => {
+  const text = ((await webviewEl.executeJavaScript('window.getSelection().toString()')) || '').trim();
+  const entry = terms.get(state.activeTabId);
+  if (!entry || !entry.attached) return;
+  const title = webviewEl.getTitle();
+  const url = webviewEl.getURL();
+  const body = text
+    ? `${text.split('\n').map((l) => `> ${l}`).join('\n')}\n（引用元: ${title} — ${url}）\n`
+    : `（閲覧中: ${title} — ${url}）\n`;
+  // 改行で送信扱いにならないよう bracketed paste で「貼り付け」として渡す
+  window.mimi.ptyInput(state.activeTabId, `\x1b[200~${body}\x1b[201~`);
+  entry.term.focus();
+});
+
+// 幅のドラッグ調整
+browserDivider.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const onMove = (ev) => {
+    const width = Math.min(window.innerWidth * 0.7, Math.max(320, window.innerWidth - ev.clientX));
+    browserPane.style.width = `${width}px`;
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    saveBrowserSettings({ width: browserPane.offsetWidth });
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+
+// ミミ（MCPのbrowser_navigate）からの要求でペインを開く
+window.mimi.onBrowserOpen((url) => openBrowserPane(url));
+
 // ---------- init ----------
 
 (async () => {
@@ -1020,6 +1127,7 @@ function openQuickAddModal() {
   applySettings();
   renderQuickbar();
   render();
+  if (browserSettings().visible) openBrowserPane();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {
     activateTab(state.activeTabId);
   }

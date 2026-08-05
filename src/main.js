@@ -120,6 +120,7 @@ function createWindow() {
     backgroundColor: '#1e1e2e',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      webviewTag: true,
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -197,6 +198,84 @@ ipcMain.on('tmux:kill-session', (_e, name) => {
   execFile(TMUX, ['kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
+
+// ---------- 埋め込みブラウザ（webview）の guest webContents を掌握し、MCPから読めるようにする ----------
+const { webContents: electronWebContents } = require('electron');
+let browserWCId = null;
+
+ipcMain.on('browser:attached', (_e, id) => {
+  browserWCId = id;
+});
+
+function getBrowserWC() {
+  if (browserWCId == null) return null;
+  const wc = electronWebContents.fromId(browserWCId);
+  return wc && !wc.isDestroyed() ? wc : null;
+}
+
+function requireBrowserWC() {
+  const wc = getBrowserWC();
+  if (!wc) {
+    throw new Error('ブラウザペインが開いていません。browser_navigate で開くか、ユーザーに🌐ボタンで開いてもらってください');
+  }
+  return wc;
+}
+
+const browserOps = {
+  navigate: async (url) => {
+    if (win && !win.isDestroyed()) win.webContents.send('browser:open', url);
+    for (let i = 0; i < 20; i++) {
+      if (getBrowserWC()) return { ok: true, url };
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    throw new Error('ブラウザペインを初期化できませんでした');
+  },
+  getPage: async () => {
+    const wc = requireBrowserWC();
+    const text = await wc.executeJavaScript('document.body ? document.body.innerText : ""');
+    const limit = 80000;
+    return {
+      url: wc.getURL(),
+      title: wc.getTitle(),
+      text: text.length > limit ? `${text.slice(0, limit)}\n…（${text.length}文字中${limit}文字で切り詰め）` : text,
+    };
+  },
+  getSelection: async () => {
+    const wc = requireBrowserWC();
+    const text = await wc.executeJavaScript('window.getSelection().toString()');
+    return { url: wc.getURL(), title: wc.getTitle(), selection: text };
+  },
+  getStyles: async () => {
+    const wc = requireBrowserWC();
+    const result = await wc.executeJavaScript(`(() => {
+      const sel = window.getSelection();
+      if (!sel.rangeCount || sel.isCollapsed) return { error: 'ページ上で範囲選択されていません' };
+      const range = sel.getRangeAt(0);
+      let container = range.commonAncestorContainer;
+      if (container.nodeType !== 1) container = container.parentElement;
+      const cells = Array.from(container.querySelectorAll('td,th')).filter((c) => range.intersectsNode(c)).slice(0, 120);
+      const targets = cells.length ? cells : [container];
+      return {
+        items: targets.map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          text: (el.innerText || '').trim().slice(0, 200),
+          backgroundColor: getComputedStyle(el).backgroundColor,
+          color: getComputedStyle(el).color,
+        })),
+      };
+    })()`);
+    return { url: wc.getURL(), ...result };
+  },
+  screenshot: async () => {
+    const wc = requireBrowserWC();
+    const image = await wc.capturePage();
+    const dir = path.join(STATE_DIR, 'screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `browser-${Date.now()}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    return { path: file, url: wc.getURL(), note: 'このPNGをReadツールで開くと見た目を確認できます' };
+  },
+};
 
 // 指定ディレクトリの Claude trust ダイアログを事前承認する。
 // インポート（過去セッションの resume）時のみ使用 — 過去に作業していたディレクトリに限る想定
@@ -386,6 +465,7 @@ if (!app.requestSingleInstanceLock()) {
     startMcpServer({
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,
+      browser: browserOps,
       // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
       mutateState: (fn) => {
         const state = loadState();

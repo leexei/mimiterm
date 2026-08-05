@@ -239,6 +239,44 @@ const TOOLS = [
         return { ok: true, background: state.settings?.background ?? null };
       }),
   },
+  {
+    name: 'browser_navigate',
+    description:
+      'MimiTerm の埋め込みブラウザペインでURLを開く（ペインが閉じていれば自動で開く）。ユーザーと同じ画面を見ながら会話するための入口。',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string', description: '開くURL（https://...）' } },
+      required: ['url'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) => ctx.browser.navigate(args.url),
+  },
+  {
+    name: 'browser_get_page',
+    description:
+      '埋め込みブラウザで表示中のページの本文テキストを取得する。ユーザーがログインして見ている実物のレンダリング結果なので、API権限不要でConfluence等も読める。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => ctx.browser.getPage(),
+  },
+  {
+    name: 'browser_get_selection',
+    description: '埋め込みブラウザでユーザーが選択中のテキストを取得する。「ここどう思う？」の「ここ」を正確に知るために使う。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => ctx.browser.getSelection(),
+  },
+  {
+    name: 'browser_get_styles',
+    description:
+      '埋め込みブラウザでユーザーが選択中の範囲の計算済みスタイル（テーブルセルの背景色・文字色）を取得する。色・網掛けで分類されたConfluenceテーブルの判読に使う（MCPのMarkdown変換では色情報が消えるため、このツールが唯一の正確な色ソース）。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => ctx.browser.getStyles(),
+  },
+  {
+    name: 'browser_screenshot',
+    description: '埋め込みブラウザの表示内容をPNGに保存してファイルパスを返す。Readツールでそのパスを開くと見た目を画像で確認できる。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => ctx.browser.screenshot(),
+  },
 ];
 
 async function dispatch(msg, ctx) {

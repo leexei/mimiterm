@@ -24,6 +24,18 @@
       <div id="quickbar"></div>
       <div id="terminals"></div>
     </main>
+    <div id="browser-divider" class="hidden"></div>
+    <div id="browser-pane" class="hidden">
+      <div id="browser-toolbar">
+        <button id="bw-back" title="戻る">◀</button>
+        <button id="bw-fwd" title="進む">▶</button>
+        <button id="bw-reload" title="再読み込み">⟳</button>
+        <input id="bw-url" placeholder="URL（https://...）" spellcheck="false" />
+        <button id="bw-ask" title="選択中のテキストをアクティブタブのClaudeへ引用">💬 選択をミミに</button>
+        <button id="bw-close" title="ブラウザを閉じる">✕</button>
+      </div>
+      <webview id="bw-view" partition="persist:browser" allowpopups="true"></webview>
+    </div>
   </div>
   <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
