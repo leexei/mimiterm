@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -36,6 +36,64 @@ function loadState() {
 function saveState(state) {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+app.setName('MimiTerm');
+
+function buildMenu() {
+  const template = [
+    {
+      label: 'MimiTerm',
+      submenu: [
+        { label: 'MimiTerm について', role: 'about' },
+        { type: 'separator' },
+        { label: 'MimiTerm を隠す', role: 'hide' },
+        { label: 'ほかを隠す', role: 'hideOthers' },
+        { label: 'すべてを表示', role: 'unhide' },
+        { type: 'separator' },
+        { label: 'MimiTerm を終了', role: 'quit' },
+      ],
+    },
+    {
+      label: 'ファイル',
+      submenu: [{ label: 'ウィンドウを閉じる', role: 'close' }],
+    },
+    {
+      label: '編集',
+      submenu: [
+        { label: '取り消す', role: 'undo' },
+        { label: 'やり直す', role: 'redo' },
+        { type: 'separator' },
+        { label: 'カット', role: 'cut' },
+        { label: 'コピー', role: 'copy' },
+        { label: 'ペースト', role: 'paste' },
+        { label: 'すべてを選択', role: 'selectAll' },
+      ],
+    },
+    {
+      label: '表示',
+      submenu: [
+        { label: '再読み込み', role: 'reload' },
+        { label: '開発者ツール', role: 'toggleDevTools' },
+        { type: 'separator' },
+        { label: '実際のサイズ', role: 'resetZoom' },
+        { label: '拡大', role: 'zoomIn' },
+        { label: '縮小', role: 'zoomOut' },
+        { type: 'separator' },
+        { label: 'フルスクリーンにする', role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'ウィンドウ',
+      submenu: [
+        { label: 'しまう', role: 'minimize' },
+        { label: '拡大/縮小', role: 'zoom' },
+        { type: 'separator' },
+        { label: 'すべてを手前に移動', role: 'front' },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 let win = null;
@@ -130,7 +188,15 @@ setInterval(() => {
   }
 }, 2000);
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  buildMenu();
+  // 開発起動（npm start）でもDockに猫アイコンを出す
+  const devIcon = path.join(__dirname, '..', 'assets', 'icon-1024.png');
+  if (app.dock && fs.existsSync(devIcon)) {
+    app.dock.setIcon(devIcon);
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   // ptyをkillしてもtmuxセッション自体は生き残る（detach相当）

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS squircle風の角丸背景 -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#1e1e2e"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#f5c2e7" stroke-width="14" opacity="0.35"/>
+  <!-- 猫シルエット -->
+  <g transform="translate(512 540) scale(3.55) translate(-50 -50)">
+    <path fill="#f5c2e7" d="M20 40 L14 14 L34 26 Q50 20 66 26 L86 14 L80 40 Q90 55 88 72 Q86 92 50 94 Q14 92 12 72 Q10 55 20 40 Z"/>
+  </g>
+  <!-- ターミナルのプロンプト風の目 -->
+  <g fill="#1e1e2e">
+    <rect x="420" y="500" width="26" height="64" rx="10"/>
+    <rect x="578" y="500" width="26" height="64" rx="10"/>
+  </g>
+</svg>
