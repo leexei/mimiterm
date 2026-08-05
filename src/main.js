@@ -453,14 +453,27 @@ let calendarCache = null;
 
 function refreshCalendar() {
   if (!fs.existsSync(CALENDAR_HELPER)) return;
+  // 直接execするとMimiTerm自身のTCC権限が必要になり、未署名アプリは再ビルドごとに権限が
+  // リセットされて破綻する。既に権限を持つtmuxサーバーのコンテキストで実行して回避する
   execFile(
-    '/bin/bash',
-    [CALENDAR_HELPER, 'today'],
-    {
-      timeout: 30000,
-      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
-    },
-    (err, stdout) => {
+    TMUX,
+    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH /bin/bash ${CALENDAR_HELPER} today`],
+    { timeout: 30000 },
+    (err, stdout, stderr) => {
+      // 取得失敗の切り分け用ログ（TCC権限・PATH問題など）
+      fs.writeFileSync(
+        path.join(STATE_DIR, 'calendar-debug.log'),
+        JSON.stringify(
+          {
+            at: new Date().toISOString(),
+            err: err ? String(err) : null,
+            stderr: String(stderr || '').slice(0, 2000),
+            stdoutHead: String(stdout || '').slice(0, 500),
+          },
+          null,
+          2
+        )
+      );
       if (err) return;
       calendarCache = { events: parseCalendarOutput(String(stdout)), fetchedAt: Date.now() };
       if (win && !win.isDestroyed()) win.webContents.send('calendar:update', calendarCache);
