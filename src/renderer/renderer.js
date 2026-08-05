@@ -257,6 +257,7 @@ function startRename(spanEl, current, commit) {
     else render();
   };
   input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return; // IME変換確定のEnterでは決定しない
     if (e.key === 'Enter') finish(true);
     if (e.key === 'Escape') finish(false);
   });
@@ -993,6 +994,7 @@ function openQuickAddModal() {
   okBtn.addEventListener('click', submit);
   [cmdInput, labelInput].forEach((input) =>
     input.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) return; // IME変換確定のEnterでは送信しない
       if (e.key === 'Enter') submit();
       if (e.key === 'Escape') overlay.remove();
     })
