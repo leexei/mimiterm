@@ -312,6 +312,25 @@ const browserOps = {
     })()`);
     return { url: wc.getURL(), ...result };
   },
+  type: async ({ text, selector, submit }) => {
+    const wc = requireBrowserWC();
+    if (selector) {
+      const focused = await wc.executeJavaScript(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return false;
+        el.focus();
+        return true;
+      })()`);
+      if (!focused) throw new Error(`selector に一致する要素がありません: ${selector}`);
+    }
+    await wc.insertText(text);
+    if (submit) {
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+      wc.sendInputEvent({ type: 'char', keyCode: '' });
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+    }
+    return { ok: true, typed: text.slice(0, 80), submitted: !!submit };
+  },
   screenshot: async () => {
     const wc = requireBrowserWC();
     const image = await wc.capturePage();

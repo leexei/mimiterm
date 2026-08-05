@@ -289,6 +289,22 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_type',
+    description:
+      '埋め込みブラウザの入力欄に文字を入力する。selector指定でその要素にフォーカスしてから入力、未指定なら現在フォーカス中の要素へ。submit=trueで入力後にEnterを送る。パスワード等の認証情報の入力には使用しないこと。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '入力するテキスト' },
+        selector: { type: 'string', description: 'フォーカスする要素のCSSセレクタ（省略時は現在のフォーカス先）' },
+        submit: { type: 'boolean', description: 'trueなら入力後にEnterを送信' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) => ctx.browser.type(args),
+  },
+  {
     name: 'bookmark_list',
     description: 'ブラウザペインのブックマーク一覧を返す。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
