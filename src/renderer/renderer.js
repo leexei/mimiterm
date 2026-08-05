@@ -330,8 +330,10 @@ function ensureTerm(tab) {
   // Shift+Enter / Option+Enter は ESC CR を送る（Claude Code が改行として解釈する。
   // iTerm2 の /terminal-setup 相当を組み込みで持つ）
   term.attachCustomKeyEventHandler((ev) => {
-    if (ev.type === 'keydown' && ev.key === 'Enter' && (ev.shiftKey || ev.altKey)) {
-      window.mimi.ptyInput(tab.id, '\x1b\r');
+    if (ev.key === 'Enter' && (ev.shiftKey || ev.altKey)) {
+      // keydown で ESC CR を1回だけ送り、keypress/keyup も含めて既定処理を止める
+      // （keypress を素通しすると裸の \r が続けて飛び、送信扱いになってしまう）
+      if (ev.type === 'keydown') window.mimi.ptyInput(tab.id, '\x1b\r');
       return false;
     }
     return true;
