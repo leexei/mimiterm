@@ -7,6 +7,7 @@ const pty = require('node-pty');
 
 const STATE_DIR = path.join(os.homedir(), '.mimiterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
+const SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
 
 // GUI起動時はbrewのPATHを継承しないため、tmuxは既知パスから解決する
 const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
@@ -93,7 +94,41 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
 
 ipcMain.on('tmux:kill-session', (_e, name) => {
   execFile(TMUX, ['kill-session', '-t', name], () => {});
+  fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
+
+// statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
+function collectClaudeSessions() {
+  const result = {};
+  let files = [];
+  try {
+    files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'));
+  } catch {
+    return result;
+  }
+  for (const file of files) {
+    try {
+      const full = path.join(SESSIONS_DIR, file);
+      const info = JSON.parse(fs.readFileSync(full, 'utf8'));
+      const tmuxSession = file.replace(/\.json$/, '');
+      result[tmuxSession] = {
+        pct: info.context_window?.used_percentage ?? null,
+        model: info.model?.display_name ?? null,
+        sessionId: info.session_id ?? null,
+        updatedAt: fs.statSync(full).mtimeMs,
+      };
+    } catch {
+      // 書き込み途中・壊れたファイルはスキップ
+    }
+  }
+  return result;
+}
+
+setInterval(() => {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('claude:sessions', collectClaudeSessions());
+  }
+}, 2000);
 
 app.whenReady().then(createWindow);
 

@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('mimi', {
   killTmuxSession: (name) => ipcRenderer.send('tmux:kill-session', name),
   onPtyData: (cb) => ipcRenderer.on('pty:data', (_e, tabId, data) => cb(tabId, data)),
   onPtyExit: (cb) => ipcRenderer.on('pty:exit', (_e, tabId) => cb(tabId)),
+  onClaudeSessions: (cb) => ipcRenderer.on('claude:sessions', (_e, sessions) => cb(sessions)),
 });

@@ -2,6 +2,7 @@
 
 let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
+let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
 
 const groupsEl = document.getElementById('groups');
 const terminalsEl = document.getElementById('terminals');
@@ -107,6 +108,11 @@ function renderTab(tab) {
   name.textContent = tab.name;
   tabEl.appendChild(name);
 
+  const badge = document.createElement('span');
+  badge.className = 'tab-badge';
+  tabEl.appendChild(badge);
+  applyBadge(badge, tab);
+
   const closeBtn = iconButton('✕', 'タブを閉じる', (e) => {
     e.stopPropagation();
     closeTab(tab);
@@ -158,6 +164,30 @@ function startRename(spanEl, current, commit) {
     if (e.key === 'Escape') finish(false);
   });
   input.addEventListener('blur', () => finish(true));
+}
+
+// Claude Code コンテキスト使用率バッジ（statusline-tap.sh 経由の情報）
+function applyBadge(badgeEl, tab) {
+  const info = claudeSessions[tab.tmuxSession];
+  if (!info || info.pct == null) {
+    badgeEl.textContent = '';
+    badgeEl.className = 'tab-badge';
+    return;
+  }
+  const pct = Math.round(info.pct);
+  const level = pct >= 70 ? 'high' : pct >= 50 ? 'mid' : 'low';
+  const stale = Date.now() - info.updatedAt > 10 * 60 * 1000;
+  badgeEl.textContent = `${pct}%`;
+  badgeEl.className = `tab-badge ${level}${stale ? ' stale' : ''}`;
+  badgeEl.title = `${info.model ?? ''}\nsession: ${info.sessionId ?? '?'}${stale ? '\n(10分以上更新なし)' : ''}`;
+}
+
+function updateBadges() {
+  document.querySelectorAll('.tab').forEach((el) => {
+    const tab = state.tabs.find((t) => t.id === el.dataset.tabId);
+    const badgeEl = el.querySelector('.tab-badge');
+    if (tab && badgeEl) applyBadge(badgeEl, tab);
+  });
 }
 
 // active/detached の見た目更新。DOMを作り直すとdblclick等が途切れるため、クラス切替のみ行う
@@ -306,6 +336,21 @@ window.mimi.onPtyExit((tabId) => {
     entry.term.write('\r\n\x1b[90m[MimiTerm] セッションが終了しました。タブをクリックすると再接続します 🐾\x1b[0m\r\n');
   }
   updateSidebarActive();
+});
+
+window.mimi.onClaudeSessions((sessions) => {
+  claudeSessions = sessions;
+  // 将来の claude --resume 用にセッションIDをタブへ永続化する
+  let changed = false;
+  for (const tab of state.tabs) {
+    const sid = sessions[tab.tmuxSession]?.sessionId;
+    if (sid && tab.claudeSessionId !== sid) {
+      tab.claudeSessionId = sid;
+      changed = true;
+    }
+  }
+  if (changed) save();
+  updateBadges();
 });
 
 window.addEventListener('resize', () => {

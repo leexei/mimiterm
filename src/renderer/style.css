@@ -135,6 +135,33 @@ html, body, #app {
   color: var(--fg-dim);
 }
 
+.tab-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab-badge.low {
+  color: #a6e3a1;
+  background: rgba(166, 227, 161, 0.15);
+}
+
+.tab-badge.mid {
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.15);
+}
+
+.tab-badge.high {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.18);
+}
+
+.tab-badge.stale {
+  opacity: 0.45;
+}
+
 .tab .icon-btn {
   visibility: hidden;
 }
