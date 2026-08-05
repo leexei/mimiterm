@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
 const pty = require('node-pty');
+const { startMcpServer } = require('./mcp-server');
 
 const STATE_DIR = path.join(os.homedir(), '.mimiterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
@@ -162,6 +163,23 @@ ipcMain.on('tmux:kill-session', (_e, name) => {
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
 
+// 指定ディレクトリの Claude trust ダイアログを事前承認する。
+// インポート（過去セッションの resume）時のみ使用 — 過去に作業していたディレクトリに限る想定
+ipcMain.handle('claude:trust-dir', (_e, dir) => {
+  const claudeJson = path.join(os.homedir(), '.claude.json');
+  try {
+    const config = JSON.parse(fs.readFileSync(claudeJson, 'utf8'));
+    config.projects = config.projects || {};
+    config.projects[dir] = config.projects[dir] || {};
+    if (config.projects[dir].hasTrustDialogAccepted === true) return 'already';
+    config.projects[dir].hasTrustDialogAccepted = true;
+    fs.writeFileSync(claudeJson, JSON.stringify(config, null, 2));
+    return 'trusted';
+  } catch (e) {
+    return `error: ${e.message}`;
+  }
+});
+
 // ~/.claude/projects/ を走査して直近の Claude Code セッション一覧を返す（インポート用）
 ipcMain.handle('claude:list-sessions', () => {
   const found = [];
@@ -260,15 +278,39 @@ setInterval(() => {
   }
 }, 2000);
 
-app.whenReady().then(() => {
-  buildMenu();
-  // 開発起動（npm start）でもDockに猫アイコンを出す
-  const devIcon = path.join(__dirname, '..', 'assets', 'icon-1024.png');
-  if (app.dock && fs.existsSync(devIcon)) {
-    app.dock.setIcon(devIcon);
-  }
-  createWindow();
-});
+// 二重起動防止（開発版とパッケージ版の同時起動によるMCPポート競合も防ぐ）
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    buildMenu();
+    // 開発起動（npm start）でもDockに猫アイコンを出す
+    const devIcon = path.join(__dirname, '..', 'assets', 'icon-1024.png');
+    if (app.dock && fs.existsSync(devIcon)) {
+      app.dock.setIcon(devIcon);
+    }
+    createWindow();
+    startMcpServer({
+      getState: loadState,
+      getClaudeSessions: collectClaudeSessions,
+      // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
+      mutateState: (fn) => {
+        const state = loadState();
+        const result = fn(state);
+        saveState(state);
+        if (win && !win.isDestroyed()) win.webContents.send('state:reload', state);
+        return result;
+      },
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   // ptyをkillしてもtmuxセッション自体は生き残る（detach相当）

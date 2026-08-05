@@ -135,6 +135,19 @@ html, body, #app {
   color: var(--fg-dim);
 }
 
+.emoji-badge {
+  font-size: 12px;
+}
+
+.schedule-chip {
+  font-size: 10px;
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.12);
+  padding: 1px 5px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
 .tab-badge {
   font-size: 10px;
   font-weight: 700;

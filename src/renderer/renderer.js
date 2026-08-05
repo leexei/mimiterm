@@ -103,10 +103,25 @@ function renderTab(tab) {
   tabEl.dataset.tabId = tab.id;
   tabEl.draggable = true;
 
+  if (tab.badgeEmoji) {
+    const emoji = document.createElement('span');
+    emoji.className = 'emoji-badge';
+    emoji.textContent = tab.badgeEmoji;
+    tabEl.appendChild(emoji);
+  }
+
   const name = document.createElement('span');
   name.className = 'tab-name';
   name.textContent = tab.name;
   tabEl.appendChild(name);
+
+  if (tab.scheduledFor) {
+    const chip = document.createElement('span');
+    chip.className = 'schedule-chip';
+    chip.textContent = `⏳${tab.scheduledFor.slice(5).replace('-', '/')}`;
+    chip.title = `再開予定: ${tab.scheduledFor}`;
+    tabEl.appendChild(chip);
+  }
 
   const badge = document.createElement('span');
   badge.className = 'tab-badge';
@@ -271,6 +286,32 @@ function removeTab(tab, killSession) {
 
 // ---------- terminals ----------
 
+// 背景画像設定（MCPのset_backgroundから変更される）
+function currentTheme() {
+  const bg = state.settings?.background;
+  const opacity = state.settings?.backgroundOpacity ?? 0.25;
+  return {
+    background: bg ? `rgba(30, 30, 46, ${Math.max(0.4, 1 - opacity)})` : '#1e1e2e',
+    foreground: '#cdd6f4',
+    cursor: '#f5c2e7',
+  };
+}
+
+function applySettings() {
+  const bg = state.settings?.background;
+  if (bg) {
+    terminalsEl.style.backgroundImage = `url('file://${bg}')`;
+    terminalsEl.style.backgroundSize = 'cover';
+    terminalsEl.style.backgroundPosition = 'center';
+  } else {
+    terminalsEl.style.backgroundImage = '';
+  }
+  const theme = currentTheme();
+  for (const entry of terms.values()) {
+    entry.term.options.theme = theme;
+  }
+}
+
 function ensureTerm(tab) {
   let entry = terms.get(tab.id);
   if (entry) return entry;
@@ -283,11 +324,17 @@ function ensureTerm(tab) {
     fontFamily: 'Menlo, "Hiragino Sans", monospace',
     fontSize: 13,
     scrollback: 10000,
-    theme: {
-      background: '#1e1e2e',
-      foreground: '#cdd6f4',
-      cursor: '#f5c2e7',
-    },
+    allowTransparency: true,
+    theme: currentTheme(),
+  });
+  // Shift+Enter / Option+Enter は ESC CR を送る（Claude Code が改行として解釈する。
+  // iTerm2 の /terminal-setup 相当を組み込みで持つ）
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type === 'keydown' && ev.key === 'Enter' && (ev.shiftKey || ev.altKey)) {
+      window.mimi.ptyInput(tab.id, '\x1b\r');
+      return false;
+    }
+    return true;
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -337,6 +384,13 @@ window.mimi.onPtyExit((tabId) => {
     entry.term.write('\r\n\x1b[90m[MimiTerm] セッションが終了しました。タブをクリックすると再接続します 🐾\x1b[0m\r\n');
   }
   updateSidebarActive();
+});
+
+// MCP経由でstateが変更されたら即時反映（ターミナル実体はtabId紐付けなので影響なし）
+window.mimi.onStateReload((newState) => {
+  state = newState;
+  applySettings();
+  render();
 });
 
 window.mimi.onClaudeSessions((sessions) => {
@@ -425,7 +479,9 @@ async function openImportModal() {
   document.body.appendChild(overlay);
 }
 
-function importSession(s) {
+async function importSession(s) {
+  // 過去に作業していたディレクトリなので trust ダイアログを事前承認しておく
+  await window.mimi.trustDir(s.cwd);
   const tab = {
     id: uid('t'),
     name: s.title.slice(0, 24),
@@ -446,6 +502,7 @@ document.getElementById('import-session').addEventListener('click', openImportMo
 (async () => {
   state = await window.mimi.loadState();
   // 前回セッションのPTYは再起動で消えているため、attach状態はリセットして描画する
+  applySettings();
   render();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {
     activateTab(state.activeTabId);
