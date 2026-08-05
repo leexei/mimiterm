@@ -543,8 +543,72 @@ const execFileP = (cmd, args, opts = {}) =>
   new Promise((resolve) => execFile(cmd, args, opts, (err, stdout) => resolve(err ? null : String(stdout))));
 
 const SHELL_CMDS = ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', '-zsh', '-bash'];
-// Claude Codeがターンを実行中に画面へ出すマーカー（静かな長時間ツール・エージェント実行中も出続ける）
-const WORKING_MARKERS = /esc to interrupt|ctrl\+b to run in background|Compacting|✳ /i;
+
+// ps全体から pid -> 子pid[] と pid -> %cpu のマップを作る
+async function processSnapshot() {
+  const out = await execFileP('/bin/ps', ['-axo', 'pid=,ppid=,%cpu=']);
+  const children = new Map();
+  const cpu = new Map();
+  if (out) {
+    for (const line of out.trim().split('\n')) {
+      const [pid, ppid, pcpu] = line.trim().split(/\s+/);
+      const p = Number(pid);
+      const pp = Number(ppid);
+      if (!children.has(pp)) children.set(pp, []);
+      children.get(pp).push(p);
+      cpu.set(p, Number(pcpu) || 0);
+    }
+  }
+  return { children, cpu };
+}
+
+// 子孫プロセス（常駐MCPサーバー等を含む）のCPU合計。アイドルなら0近傍、ツール実行中は上がる
+function descendantsCpu(snap, pid, depth = 0) {
+  if (depth > 10) return 0;
+  let total = 0;
+  for (const kid of snap.children.get(pid) || []) {
+    total += (snap.cpu.get(kid) || 0) + descendantsCpu(snap, kid, depth + 1);
+  }
+  return total;
+}
+
+// サブエージェントの transcript (agent-*.jsonl) の書き込みから「裏で動いてるセッション」を検出
+const agentFileSession = new Map(); // filePath -> claude sessionId
+
+function collectAgentActivity(sessions, now) {
+  const active = {}; // claude sessionId -> true
+  const dirs = new Set();
+  for (const info of Object.values(sessions)) {
+    if (info.transcriptPath) dirs.add(path.dirname(info.transcriptPath));
+  }
+  for (const dir of dirs) {
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.startsWith('agent-') && f.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const full = path.join(dir, f);
+      try {
+        if (now - fs.statSync(full).mtimeMs > 20000) continue;
+        let sid = agentFileSession.get(full);
+        if (!sid) {
+          const fd = fs.openSync(full, 'r');
+          const buf = Buffer.alloc(4096);
+          const n = fs.readSync(fd, buf, 0, buf.length, 0);
+          fs.closeSync(fd);
+          sid = buf.toString('utf8', 0, n).match(/"sessionId":"([0-9a-f-]{8,})"/)?.[1] ?? null;
+          if (sid) agentFileSession.set(full, sid);
+        }
+        if (sid) active[sid] = true;
+      } catch {
+        // 読み取り中のファイル等は無視
+      }
+    }
+  }
+  return active;
+}
 
 setInterval(async () => {
   if (!win || win.isDestroyed()) return;
@@ -552,48 +616,55 @@ setInterval(async () => {
     'list-panes',
     '-a',
     '-F',
-    '#{session_name}\t#{window_activity}\t#{pane_current_command}',
+    '#{session_name}\t#{window_activity}\t#{pane_current_command}\t#{pane_pid}',
   ]);
   const activity = {};
   const paneCommands = {};
+  const panePids = {};
   if (out) {
     for (const line of out.trim().split('\n')) {
-      const [sess, at, cmd] = line.split('\t');
+      const [sess, at, cmd, pid] = line.split('\t');
       if (sess && sess.startsWith('mimi-')) {
         activity[sess] = Number(at) * 1000;
         paneCommands[sess] = cmd || null;
+        panePids[sess] = Number(pid) || null;
       }
     }
   }
   const sessions = collectClaudeSessions();
   const now = Date.now();
+  const procSnap = await processSnapshot();
+  const agentActive = collectAgentActivity(sessions, now);
   const working = {};
-  await Promise.all(
-    Object.keys(activity).map(async (sess) => {
-      // 1) 出力が直近流れている
-      if (now - activity[sess] < 4000) {
-        working[sess] = true;
-        return;
-      }
-      // 2) transcriptが直近書かれている（画面が静かでもツール実行等で進んでいる）
-      const tp = sessions[sess]?.transcriptPath;
-      if (tp) {
-        try {
-          if (now - fs.statSync(tp).mtimeMs < 15000) {
-            working[sess] = true;
-            return;
-          }
-        } catch {
-          // transcript未作成などは無視
+  for (const sess of Object.keys(activity)) {
+    // 1) 出力が直近流れている（ストリーミング・スピナー描画中）
+    if (now - activity[sess] < 4000) {
+      working[sess] = true;
+      continue;
+    }
+    // 2) transcriptが直近書かれている（メッセージ/ツール呼び出しが進行中）
+    const info = sessions[sess];
+    if (info?.transcriptPath) {
+      try {
+        if (now - fs.statSync(info.transcriptPath).mtimeMs < 15000) {
+          working[sess] = true;
+          continue;
         }
+      } catch {
+        // transcript未作成などは無視
       }
-      // 3) 画面末尾に実行中マーカーが出ている（バックグラウンドエージェント待ち等）
-      if (paneCommands[sess] && !SHELL_CMDS.includes(paneCommands[sess])) {
-        const tail = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess, '-S', '-8']);
-        if (tail && WORKING_MARKERS.test(tail)) working[sess] = true;
-      }
-    })
-  );
+    }
+    // 3) プロセスツリーのCPU: ツール実行中は子孫プロセスが働く（常駐MCPはアイドルで0近傍）
+    const isShellOnly = !paneCommands[sess] || SHELL_CMDS.includes(paneCommands[sess]);
+    if (!isShellOnly && panePids[sess] && descendantsCpu(procSnap, panePids[sess]) >= 5) {
+      working[sess] = true;
+      continue;
+    }
+    // 4) サブエージェントのtranscriptが書き込まれ続けている（バックグラウンドエージェント）
+    if (info?.sessionId && agentActive[info.sessionId]) {
+      working[sess] = true;
+    }
+  }
   if (win && !win.isDestroyed()) {
     win.webContents.send('claude:sessions', {
       sessions,
