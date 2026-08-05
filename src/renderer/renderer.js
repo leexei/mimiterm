@@ -297,6 +297,28 @@ function currentTheme() {
   };
 }
 
+// WebGLレンダラー: セル幅の丸め誤差蓄積による右端欠けを防ぐ。
+// 背景画像使用時は透過描画のためDOMレンダラーに切り替える
+function syncRenderer(entry) {
+  const wantWebgl = !state.settings?.background;
+  if (wantWebgl && !entry.webgl) {
+    try {
+      const addon = new WebglAddon.WebglAddon();
+      addon.onContextLoss(() => {
+        addon.dispose();
+        entry.webgl = null;
+      });
+      entry.term.loadAddon(addon);
+      entry.webgl = addon;
+    } catch {
+      entry.webgl = null; // WebGL不可の環境ではDOMレンダラーのまま
+    }
+  } else if (!wantWebgl && entry.webgl) {
+    entry.webgl.dispose();
+    entry.webgl = null;
+  }
+}
+
 function applySettings() {
   const bg = state.settings?.background;
   if (bg) {
@@ -309,6 +331,7 @@ function applySettings() {
   const theme = currentTheme();
   for (const entry of terms.values()) {
     entry.term.options.theme = theme;
+    syncRenderer(entry);
   }
 }
 
@@ -344,8 +367,9 @@ function ensureTerm(tab) {
   term.onData((data) => window.mimi.ptyInput(tab.id, data));
   term.onResize(({ cols, rows }) => window.mimi.ptyResize(tab.id, cols, rows));
 
-  entry = { term, fit, container, attached: false };
+  entry = { term, fit, container, attached: false, webgl: null };
   terms.set(tab.id, entry);
+  syncRenderer(entry);
   return entry;
 }
 

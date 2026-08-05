@@ -320,3 +320,13 @@ html, body, #app {
 #empty-hint svg {
   opacity: 0.3;
 }
+
+/* IME変換中のプレビュー: 下の描画済み文字と重なって見えないよう不透明背景+下線で明示する */
+.term-container .composition-view {
+  background: #11111b;
+  color: #f5c2e7;
+  border-bottom: 2px solid #f5c2e7;
+  font-family: Menlo, "Hiragino Sans", monospace;
+  font-size: 13px;
+  line-height: normal;
+}
