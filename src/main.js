@@ -525,6 +525,7 @@ function collectClaudeSessions() {
         model: info.model?.display_name ?? null,
         sessionId: info.session_id ?? null,
         permissionMode: info.transcript_path ? readPermissionMode(info.transcript_path) : null,
+        transcriptPath: info.transcript_path ?? null,
         updatedAt: mtime,
       };
       if (info.rate_limits && mtime > newestMtime) {
@@ -538,34 +539,70 @@ function collectClaudeSessions() {
   return result;
 }
 
-setInterval(() => {
+const execFileP = (cmd, args, opts = {}) =>
+  new Promise((resolve) => execFile(cmd, args, opts, (err, stdout) => resolve(err ? null : String(stdout))));
+
+const SHELL_CMDS = ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', '-zsh', '-bash'];
+// Claude Codeがターンを実行中に画面へ出すマーカー（静かな長時間ツール・エージェント実行中も出続ける）
+const WORKING_MARKERS = /esc to interrupt|ctrl\+b to run in background|Compacting|✳ /i;
+
+setInterval(async () => {
   if (!win || win.isDestroyed()) return;
-  // tmuxの出力アクティビティで「考え中(出力が流れている)/応答待ち(静止)」を判定する
-  execFile(
-    TMUX,
-    ['list-panes', '-a', '-F', '#{session_name}\t#{window_activity}\t#{pane_current_command}'],
-    (err, stdout) => {
-      const activity = {};
-      const paneCommands = {};
-      if (!err) {
-        for (const line of String(stdout).trim().split('\n')) {
-          const [sess, at, cmd] = line.split('\t');
-          if (sess && sess.startsWith('mimi-')) {
-            activity[sess] = Number(at) * 1000;
-            paneCommands[sess] = cmd || null;
-          }
-        }
-      }
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('claude:sessions', {
-          sessions: collectClaudeSessions(),
-          activity,
-          paneCommands,
-          rateLimits: latestRateLimits,
-        });
+  const out = await execFileP(TMUX, [
+    'list-panes',
+    '-a',
+    '-F',
+    '#{session_name}\t#{window_activity}\t#{pane_current_command}',
+  ]);
+  const activity = {};
+  const paneCommands = {};
+  if (out) {
+    for (const line of out.trim().split('\n')) {
+      const [sess, at, cmd] = line.split('\t');
+      if (sess && sess.startsWith('mimi-')) {
+        activity[sess] = Number(at) * 1000;
+        paneCommands[sess] = cmd || null;
       }
     }
+  }
+  const sessions = collectClaudeSessions();
+  const now = Date.now();
+  const working = {};
+  await Promise.all(
+    Object.keys(activity).map(async (sess) => {
+      // 1) 出力が直近流れている
+      if (now - activity[sess] < 4000) {
+        working[sess] = true;
+        return;
+      }
+      // 2) transcriptが直近書かれている（画面が静かでもツール実行等で進んでいる）
+      const tp = sessions[sess]?.transcriptPath;
+      if (tp) {
+        try {
+          if (now - fs.statSync(tp).mtimeMs < 15000) {
+            working[sess] = true;
+            return;
+          }
+        } catch {
+          // transcript未作成などは無視
+        }
+      }
+      // 3) 画面末尾に実行中マーカーが出ている（バックグラウンドエージェント待ち等）
+      if (paneCommands[sess] && !SHELL_CMDS.includes(paneCommands[sess])) {
+        const tail = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess, '-S', '-8']);
+        if (tail && WORKING_MARKERS.test(tail)) working[sess] = true;
+      }
+    })
   );
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('claude:sessions', {
+      sessions,
+      activity,
+      paneCommands,
+      working,
+      rateLimits: latestRateLimits,
+    });
+  }
 }, 1500);
 
 // 二重起動防止（開発版とパッケージ版の同時起動によるMCPポート競合も防ぐ）

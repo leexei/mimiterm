@@ -4,9 +4,8 @@ let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
 let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
 let activityMap = {}; // tmuxSession -> 最終出力アクティビティ(ms epoch)
+let workingMap = {}; // tmuxSession -> 作業中判定（main側で出力/transcript/画面マーカーの3信号から算出）
 let paneCommands = {}; // tmuxSession -> 前面プロセス名（zsh / claude / node 等）
-
-const BUSY_THRESHOLD_MS = 4000;
 const SPIN_FRAMES = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'];
 let spinFrame = 0;
 
@@ -335,9 +334,8 @@ function showPreview(tabEl, tab, text) {
 
 // タブの稼働状態: 出力が流れている=考え中(スピナー) / Claudeセッションありで静止=応答待ち(●)
 function applyStatus(statusEl, tab) {
-  const act = activityMap[tab.tmuxSession];
   const info = claudeSessions[tab.tmuxSession];
-  if (act && Date.now() - act < BUSY_THRESHOLD_MS) {
+  if (workingMap[tab.tmuxSession]) {
     statusEl.className = 'tab-status busy';
     statusEl.textContent = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
     statusEl.title = '考え中…';
@@ -732,9 +730,10 @@ function renderRateLimits(rl) {
   el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
 }
 
-window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, rateLimits }) => {
+window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
+  workingMap = working ?? {};
   paneCommands = cmds ?? {};
   renderRateLimits(rateLimits);
   renderQuickbar();
