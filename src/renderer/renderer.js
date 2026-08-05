@@ -455,16 +455,28 @@ function closeTab(tab) {
 }
 
 function removeTab(tab, killSession) {
-  const entry = terms.get(tab.id);
-  if (entry) {
-    window.mimi.ptyKill(tab.id);
-    entry.term.dispose();
-    entry.container.remove();
-    terms.delete(tab.id);
-  }
-  if (killSession) window.mimi.killTmuxSession(tab.tmuxSession);
+  // 先に状態から消す（ターミナル破棄が例外を投げてもタブがサイドバーに残らないように）
   state.tabs = state.tabs.filter((t) => t.id !== tab.id);
   if (state.activeTabId === tab.id) state.activeTabId = null;
+  const entry = terms.get(tab.id);
+  terms.delete(tab.id);
+  if (killSession) window.mimi.killTmuxSession(tab.tmuxSession);
+  if (entry) {
+    window.mimi.ptyKill(tab.id);
+    clearTimeout(entry.syncTimer);
+    try {
+      entry.webgl?.dispose();
+      entry.webgl = null;
+    } catch {
+      // WebGLコンテキスト破棄失敗は無視してよい
+    }
+    try {
+      entry.term.dispose();
+    } catch {
+      // dispose中の例外でクローズ処理を止めない
+    }
+    entry.container.remove();
+  }
 }
 
 // ---------- terminals ----------
