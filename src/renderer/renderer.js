@@ -1104,6 +1104,8 @@ document.getElementById('bw-ask').addEventListener('click', async () => {
 // 幅のドラッグ調整
 browserDivider.addEventListener('mousedown', (e) => {
   e.preventDefault();
+  // ドラッグ中はwebview（別プロセス）にマウスイベントを奪われないよう遮断する
+  document.body.classList.add('resizing');
   const onMove = (ev) => {
     const width = Math.min(window.innerWidth * 0.7, Math.max(320, window.innerWidth - ev.clientX));
     browserPane.style.width = `${width}px`;
@@ -1111,6 +1113,7 @@ browserDivider.addEventListener('mousedown', (e) => {
   const onUp = () => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('resizing');
     saveBrowserSettings({ width: browserPane.offsetWidth });
   };
   document.addEventListener('mousemove', onMove);

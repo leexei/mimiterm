@@ -572,6 +572,17 @@ html, body, #app {
   background: var(--bg-hover);
 }
 
+/* ディバイダードラッグ中: webviewと本体UIへのマウス干渉を止める */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing #bw-view,
+body.resizing #terminals {
+  pointer-events: none;
+}
+
 #browser-divider:hover {
   background: var(--accent);
 }
