@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('mimi', {
   ptyCreate: (opts) => ipcRenderer.invoke('pty:create', opts),
   listClaudeSessions: () => ipcRenderer.invoke('claude:list-sessions'),
   trustDir: (dir) => ipcRenderer.invoke('claude:trust-dir', dir),
+  capturePane: (sessionName) => ipcRenderer.invoke('tmux:capture', sessionName),
   ptyInput: (tabId, data) => ipcRenderer.send('pty:input', { tabId, data }),
   ptyResize: (tabId, cols, rows) => ipcRenderer.send('pty:resize', { tabId, cols, rows }),
   ptyKill: (tabId) => ipcRenderer.send('pty:kill', { tabId }),

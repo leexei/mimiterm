@@ -181,6 +181,7 @@ function renderTab(tab) {
   tabEl.appendChild(closeBtn);
 
   tabEl.addEventListener('click', () => activateTab(tab.id));
+  attachHoverPreview(tabEl, tab);
   name.addEventListener('dblclick', (e) => {
     e.stopPropagation();
     startRename(name, tab.name, (v) => {
@@ -259,6 +260,70 @@ function startRename(spanEl, current, commit) {
     if (e.key === 'Escape') finish(false);
   });
   input.addEventListener('blur', () => finish(true));
+}
+
+// ---------- ホバープレビュー ----------
+// タブに乗せると、そのtmuxセッションの現在画面をポップオーバー表示する（tmux capture-pane、LLM不要）
+
+let previewEl = null;
+let previewToken = 0;
+
+function hidePreview() {
+  previewToken++;
+  if (previewEl) {
+    previewEl.remove();
+    previewEl = null;
+  }
+}
+
+function attachHoverPreview(tabEl, tab) {
+  let timer = null;
+  tabEl.addEventListener('mouseenter', () => {
+    timer = setTimeout(async () => {
+      // アクティブタブは本物が見えているのでプレビュー不要
+      if (tab.id === state.activeTabId) return;
+      const token = ++previewToken;
+      const text = await window.mimi.capturePane(tab.tmuxSession);
+      if (token !== previewToken) return; // すでにマウスが離れた
+      showPreview(tabEl, tab, text);
+    }, 350);
+  });
+  tabEl.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    hidePreview();
+  });
+  tabEl.addEventListener('click', () => {
+    clearTimeout(timer);
+    hidePreview();
+  });
+}
+
+function showPreview(tabEl, tab, text) {
+  hidePreview();
+  previewToken++; // hidePreviewのincrementと合わせトークンを進めておく
+  const info = claudeSessions[tab.tmuxSession];
+  const lines = (text ?? '').split('\n').filter((l, i, arr) => !(l === '' && arr[i + 1] === ''));
+  const tail = lines.slice(-24).join('\n');
+
+  previewEl = document.createElement('div');
+  previewEl.id = 'tab-preview';
+  const meta = [info?.model, info?.pct != null ? `ctx ${Math.round(info.pct)}%` : null]
+    .filter(Boolean)
+    .join(' ・ ');
+  const header = document.createElement('div');
+  header.className = 'preview-header';
+  header.textContent = meta ? `${tab.name} — ${meta}` : tab.name;
+  const body = document.createElement('pre');
+  body.className = 'preview-body';
+  body.textContent = text == null ? '（セッションが起動していないよ）' : tail || '（画面は空だよ）';
+  previewEl.appendChild(header);
+  previewEl.appendChild(body);
+  document.body.appendChild(previewEl);
+
+  const rect = tabEl.getBoundingClientRect();
+  const top = Math.min(rect.top, window.innerHeight - previewEl.offsetHeight - 12);
+  previewEl.style.left = `${rect.right + 8}px`;
+  previewEl.style.top = `${Math.max(8, top)}px`;
 }
 
 // タブの稼働状態: 出力が流れている=考え中(スピナー) / Claudeセッションありで静止=応答待ち(●)

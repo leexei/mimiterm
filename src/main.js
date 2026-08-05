@@ -180,6 +180,19 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
   ptys.delete(tabId);
 });
 
+// ホバープレビュー用: セッションの現在画面をテキストで取得（LLM不要・低コスト）
+ipcMain.handle('tmux:capture', (_e, sessionName) => {
+  return new Promise((resolve) => {
+    execFile(TMUX, ['capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      resolve(String(stdout).replace(/\s+$/, ''));
+    });
+  });
+});
+
 ipcMain.on('tmux:kill-session', (_e, name) => {
   execFile(TMUX, ['kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
