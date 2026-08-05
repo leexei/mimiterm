@@ -205,6 +205,15 @@ let browserWCId = null;
 
 ipcMain.on('browser:attached', (_e, id) => {
   browserWCId = id;
+  // target=_blank / window.open は別ウィンドウにせず埋め込みペイン内で開く
+  // （外に出るとMCPから操作できなくなるため）
+  const wc = electronWebContents.fromId(id);
+  if (wc) {
+    wc.setWindowOpenHandler(({ url }) => {
+      if (win && !win.isDestroyed()) win.webContents.send('browser:open', url);
+      return { action: 'deny' };
+    });
+  }
 });
 
 function getBrowserWC() {
@@ -263,6 +272,43 @@ const browserOps = {
           color: getComputedStyle(el).color,
         })),
       };
+    })()`);
+    return { url: wc.getURL(), ...result };
+  },
+  click: async ({ selector, text }) => {
+    const wc = requireBrowserWC();
+    const result = await wc.executeJavaScript(`(() => {
+      const sel = ${JSON.stringify(selector || '')};
+      const text = ${JSON.stringify(text || '')};
+      let el = null;
+      if (sel) {
+        el = document.querySelector(sel);
+      } else if (text) {
+        const clickable = Array.from(document.querySelectorAll(
+          'a,button,[role="button"],[role="tab"],[role="menuitem"],[role="link"],input[type="submit"],[onclick],summary'
+        ));
+        el = clickable.find((n) => ((n.innerText || n.value || '').trim()).includes(text)) || null;
+        if (!el) {
+          const leaves = Array.from(document.querySelectorAll('div,span,td,th,li,p,h1,h2,h3'))
+            .filter((n) => n.children.length === 0 && (n.innerText || '').trim().includes(text));
+          el = leaves[0] || null;
+        }
+      }
+      if (!el) return { error: 'クリック対象の要素が見つかりませんでした' };
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      const rect = el.getBoundingClientRect();
+      const opts = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: rect.x + rect.width / 2,
+        clientY: rect.y + rect.height / 2,
+      };
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        const Ev = type.startsWith('pointer') && window.PointerEvent ? PointerEvent : MouseEvent;
+        el.dispatchEvent(new Ev(type, opts));
+      }
+      return { ok: true, clicked: ((el.innerText || el.value || el.tagName) + '').trim().slice(0, 80) };
     })()`);
     return { url: wc.getURL(), ...result };
   },

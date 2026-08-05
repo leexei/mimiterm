@@ -31,9 +31,11 @@
         <button id="bw-fwd" title="進む">▶</button>
         <button id="bw-reload" title="再読み込み">⟳</button>
         <input id="bw-url" placeholder="URL（https://...）" spellcheck="false" />
+        <button id="bw-star" title="このページをブックマーク">⭐</button>
         <button id="bw-ask" title="選択中のテキストをアクティブタブのClaudeへ引用">💬 選択をミミに</button>
         <button id="bw-close" title="ブラウザを閉じる">✕</button>
       </div>
+      <div id="bw-bookmarks" class="hidden"></div>
       <!-- Electron既定のUAだとSSO IdPに弾かれることがあるためChrome相当のUAを名乗る -->
       <webview id="bw-view" partition="persist:browser" allowpopups="true" useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"></webview>
     </div>

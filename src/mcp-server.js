@@ -272,6 +272,72 @@ const TOOLS = [
     handler: (_args, ctx) => ctx.browser.getStyles(),
   },
   {
+    name: 'browser_click',
+    description:
+      '埋め込みブラウザ内の要素をクリックする（ダッシュボードのパネル展開・タブ切替・リンク遷移など）。selector（CSSセレクタ）か text（表示テキストの部分一致）のどちらかで対象を指定。SSO/MFA等の認証承認画面では使用しないこと。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSSセレクタ（例: .panel-title a）' },
+        text: { type: 'string', description: '表示テキストの部分一致（selector未指定時に使用）' },
+      },
+      additionalProperties: false,
+    },
+    handler: (args, ctx) => {
+      if (!args.selector && !args.text) throw new Error('selector か text のどちらかを指定してください');
+      return ctx.browser.click(args);
+    },
+  },
+  {
+    name: 'bookmark_list',
+    description: 'ブラウザペインのブックマーク一覧を返す。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => ({
+      bookmarks: ctx.getState().settings?.browser?.bookmarks ?? [],
+    }),
+  },
+  {
+    name: 'bookmark_add',
+    description: 'ブラウザペインにブックマークを追加する（同一URLは重複追加しない）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'ブックマークするURL' },
+        label: { type: 'string', description: '表示名（省略時はURL）' },
+      },
+      required: ['url'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) =>
+      ctx.mutateState((state) => {
+        state.settings = state.settings || {};
+        state.settings.browser = state.settings.browser || {};
+        const list = state.settings.browser.bookmarks || [];
+        if (list.some((b) => b.url === args.url)) return { ok: true, added: false, reason: '既に存在' };
+        list.push({ label: (args.label || args.url).slice(0, 28), url: args.url });
+        state.settings.browser.bookmarks = list;
+        return { ok: true, added: true };
+      }),
+  },
+  {
+    name: 'bookmark_remove',
+    description: 'ブラウザペインのブックマークを削除する。ref にはURLか表示名を指定。',
+    inputSchema: {
+      type: 'object',
+      properties: { ref: { type: 'string', description: '削除対象のURL or 表示名' } },
+      required: ['ref'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) =>
+      ctx.mutateState((state) => {
+        const list = state.settings?.browser?.bookmarks || [];
+        const remain = list.filter((b) => b.url !== args.ref && b.label !== args.ref);
+        if (remain.length === list.length) throw new Error(`ブックマークが見つかりません: ${args.ref}`);
+        state.settings.browser.bookmarks = remain;
+        return { ok: true, removed: list.length - remain.length };
+      }),
+  },
+  {
     name: 'browser_screenshot',
     description: '埋め込みブラウザの表示内容をPNGに保存してファイルパスを返す。Readツールでそのパスを開くと見た目を画像で確認できる。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

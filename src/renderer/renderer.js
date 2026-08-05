@@ -681,6 +681,7 @@ window.mimi.onStateReload((newState) => {
   state = newState;
   applySettings();
   renderQuickbar();
+  renderBookmarks();
   render();
 });
 
@@ -1116,6 +1117,46 @@ browserDivider.addEventListener('mousedown', (e) => {
   document.addEventListener('mouseup', onUp);
 });
 
+// ---- ブックマーク（ミミもMCPのbookmark_*ツールで管理できる） ----
+
+const bookmarksBar = document.getElementById('bw-bookmarks');
+
+function bookmarks() {
+  return browserSettings().bookmarks ?? [];
+}
+
+function saveBookmarks(list) {
+  saveBrowserSettings({ bookmarks: list });
+  renderBookmarks();
+}
+
+function renderBookmarks() {
+  bookmarksBar.innerHTML = '';
+  for (const bm of bookmarks()) {
+    const pill = document.createElement('button');
+    pill.className = 'bm-pill';
+    pill.textContent = bm.label;
+    pill.title = `${bm.url}\n（右クリックで削除）`;
+    pill.addEventListener('click', () => openBrowserPane(bm.url));
+    pill.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (confirm(`ブックマーク「${bm.label}」を削除しますか？`)) {
+        saveBookmarks(bookmarks().filter((b) => b.url !== bm.url));
+      }
+    });
+    bookmarksBar.appendChild(pill);
+  }
+  bookmarksBar.classList.toggle('hidden', bookmarks().length === 0);
+}
+
+document.getElementById('bw-star').addEventListener('click', () => {
+  const url = webviewEl.getURL();
+  if (!url) return;
+  if (bookmarks().some((b) => b.url === url)) return;
+  const label = (webviewEl.getTitle() || url).slice(0, 28);
+  saveBookmarks([...bookmarks(), { label, url }]);
+});
+
 // ミミ（MCPのbrowser_navigate）からの要求でペインを開く
 window.mimi.onBrowserOpen((url) => openBrowserPane(url));
 
@@ -1127,6 +1168,7 @@ window.mimi.onBrowserOpen((url) => openBrowserPane(url));
   applySettings();
   renderQuickbar();
   render();
+  renderBookmarks();
   if (browserSettings().visible) openBrowserPane();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {
     activateTab(state.activeTabId);
