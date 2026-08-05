@@ -692,6 +692,17 @@ function renderRateLimits(rl) {
     el.innerHTML = '';
     return;
   }
+  const fmtRemain = (resetsAt) => {
+    if (!resetsAt) return '';
+    let s = Math.max(0, resetsAt * 1000 - Date.now()) / 1000;
+    const d = Math.floor(s / 86400);
+    s %= 86400;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d > 0) return `あと${d}d${h}h`;
+    if (h > 0) return `あと${h}h${m}m`;
+    return `あと${m}m`;
+  };
   const row = (label, win) => {
     if (!win || win.used_percentage == null) return '';
     const pct = Math.round(win.used_percentage);
@@ -707,7 +718,10 @@ function renderRateLimits(rl) {
     return `
       <div class="rl-row" title="リセット: ${resets}">
         <span class="rl-label">${label}</span>
-        <span class="rl-bar"><span class="rl-fill ${level}" style="width:${Math.min(100, pct)}%"></span></span>
+        <span class="rl-bar">
+          <span class="rl-fill ${level}" style="width:${Math.min(100, pct)}%"></span>
+          <span class="rl-reset">${fmtRemain(win.resets_at)}</span>
+        </span>
         <span class="rl-pct ${level}">${pct}%</span>
       </div>`;
   };
