@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('mimi', {
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: (state) => ipcRenderer.send('state:save', state),
   ptyCreate: (opts) => ipcRenderer.invoke('pty:create', opts),
+  listClaudeSessions: () => ipcRenderer.invoke('claude:list-sessions'),
   ptyInput: (tabId, data) => ipcRenderer.send('pty:input', { tabId, data }),
   ptyResize: (tabId, cols, rows) => ipcRenderer.send('pty:resize', { tabId, cols, rows }),
   ptyKill: (tabId) => ipcRenderer.send('pty:kill', { tabId }),

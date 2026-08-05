@@ -8,6 +8,7 @@ const pty = require('node-pty');
 const STATE_DIR = path.join(os.homedir(), '.mimiterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
+const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
 // GUI起動時はbrewのPATHを継承しないため、tmuxは既知パスから解決する
 const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
@@ -114,7 +115,7 @@ function createWindow() {
 ipcMain.handle('state:load', () => loadState());
 ipcMain.on('state:save', (_e, state) => saveState(state));
 
-ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows }) => {
+ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand }) => {
   if (ptys.has(tabId)) return 'exists';
   const p = pty.spawn(TMUX, ['new-session', '-A', '-s', tmuxSession], {
     name: 'xterm-256color',
@@ -124,6 +125,12 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows }) => {
     env: { ...process.env, LANG: process.env.LANG || 'ja_JP.UTF-8' },
   });
   ptys.set(tabId, p);
+  if (initialCommand) {
+    // セッション生成直後はシェル起動前なので、少し待ってから send-keys で流し込む
+    setTimeout(() => {
+      execFile(TMUX, ['send-keys', '-t', tmuxSession, initialCommand, 'Enter'], () => {});
+    }, 700);
+  }
   p.onData((data) => {
     if (win && !win.isDestroyed()) win.webContents.send('pty:data', tabId, data);
   });
@@ -153,6 +160,71 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
 ipcMain.on('tmux:kill-session', (_e, name) => {
   execFile(TMUX, ['kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
+});
+
+// ~/.claude/projects/ を走査して直近の Claude Code セッション一覧を返す（インポート用）
+ipcMain.handle('claude:list-sessions', () => {
+  const found = [];
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(CLAUDE_PROJECTS_DIR);
+  } catch {
+    return found;
+  }
+  for (const d of dirs) {
+    const dirPath = path.join(CLAUDE_PROJECTS_DIR, d);
+    let files = [];
+    try {
+      files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const full = path.join(dirPath, f);
+      try {
+        const st = fs.statSync(full);
+        if (!st.isFile() || st.size < 2000) continue; // ほぼ空のセッションは除外
+        found.push({ file: full, sessionId: f.replace(/\.jsonl$/, ''), mtime: st.mtimeMs });
+      } catch {
+        // skip
+      }
+    }
+  }
+  found.sort((a, b) => b.mtime - a.mtime);
+  const top = found.slice(0, 30);
+  for (const s of top) {
+    try {
+      const fd = fs.openSync(s.file, 'r');
+      const buf = Buffer.alloc(131072);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      let firstUser = null;
+      for (const line of buf.toString('utf8', 0, n).split('\n')) {
+        if (!s.cwd) {
+          const m = line.match(/"cwd":"([^"]+)"/);
+          if (m) s.cwd = m[1];
+        }
+        if (!s.title || !firstUser) {
+          try {
+            const obj = JSON.parse(line);
+            if (obj.type === 'summary' && obj.summary) s.title = obj.summary;
+            if (!firstUser && obj.type === 'user' && typeof obj.message?.content === 'string') {
+              const text = obj.message.content.replace(/\s+/g, ' ').trim();
+              if (text && !text.startsWith('<')) firstUser = text;
+            }
+          } catch {
+            // 途中で切れた行などは無視
+          }
+        }
+        if (s.cwd && s.title) break;
+      }
+      s.title = (s.title || firstUser || s.sessionId).slice(0, 60);
+    } catch {
+      s.title = s.sessionId;
+    }
+    delete s.file;
+  }
+  return top.filter((s) => s.cwd);
 });
 
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する

@@ -300,7 +300,7 @@ function ensureTerm(tab) {
   return entry;
 }
 
-async function activateTab(tabId) {
+async function activateTab(tabId, initialCommand) {
   const tab = state.tabs.find((t) => t.id === tabId);
   if (!tab) return;
   state.activeTabId = tabId;
@@ -318,6 +318,7 @@ async function activateTab(tabId) {
       tmuxSession: tab.tmuxSession,
       cols: entry.term.cols,
       rows: entry.term.rows,
+      initialCommand,
     });
   }
   entry.term.focus();
@@ -359,6 +360,86 @@ window.addEventListener('resize', () => {
 });
 
 document.getElementById('add-group').addEventListener('click', createGroup);
+
+// ---------- Claude セッションインポート ----------
+
+function relativeTime(ms) {
+  const diff = Date.now() - ms;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'たった今';
+  if (min < 60) return `${min}分前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}時間前`;
+  return `${Math.floor(hour / 24)}日前`;
+}
+
+function currentGroupId() {
+  const activeTab = state.tabs.find((t) => t.id === state.activeTabId);
+  if (activeTab) return activeTab.groupId;
+  if (state.groups.length === 0) createGroup();
+  return state.groups[0].id;
+}
+
+async function openImportModal() {
+  const sessions = await window.mimi.listClaudeSessions();
+  const known = new Set(state.tabs.map((t) => t.claudeSessionId).filter(Boolean));
+  const candidates = sessions.filter((s) => !known.has(s.sessionId));
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.id = 'import-modal';
+  modal.innerHTML = '<div class="modal-title">Claude セッションを取り込む 🐾</div>';
+
+  const listEl = document.createElement('div');
+  listEl.className = 'modal-list';
+  if (candidates.length === 0) {
+    listEl.innerHTML = '<div class="modal-empty">取り込めるセッションが見つからないよ</div>';
+  }
+  for (const s of candidates) {
+    const item = document.createElement('div');
+    item.className = 'modal-item';
+    const cwdShort = s.cwd.replace(/^\/Users\/[^/]+/, '~');
+    item.innerHTML = `
+      <div class="modal-item-title"></div>
+      <div class="modal-item-meta"></div>`;
+    item.querySelector('.modal-item-title').textContent = s.title;
+    item.querySelector('.modal-item-meta').textContent = `${cwdShort} ・ ${relativeTime(s.mtime)} ・ ${s.sessionId.slice(0, 8)}`;
+    item.addEventListener('click', () => {
+      overlay.remove();
+      importSession(s);
+    });
+    listEl.appendChild(item);
+  }
+  modal.appendChild(listEl);
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.addEventListener('keydown', function esc(e) {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      document.removeEventListener('keydown', esc);
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
+function importSession(s) {
+  const tab = {
+    id: uid('t'),
+    name: s.title.slice(0, 24),
+    groupId: currentGroupId(),
+    tmuxSession: uid('mimi'),
+    claudeSessionId: s.sessionId,
+  };
+  state.tabs.push(tab);
+  save();
+  render();
+  activateTab(tab.id, `cd '${s.cwd}' && claude --resume ${s.sessionId}`);
+}
+
+document.getElementById('import-session').addEventListener('click', openImportModal);
 
 // ---------- init ----------
 

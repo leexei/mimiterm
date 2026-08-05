@@ -197,7 +197,8 @@ html, body, #app {
   outline: none;
 }
 
-#add-group {
+#add-group,
+#import-session {
   margin-top: 8px;
   padding: 8px;
   background: none;
@@ -208,9 +209,71 @@ html, body, #app {
   font-size: 12px;
 }
 
-#add-group:hover {
+#add-group:hover,
+#import-session:hover {
   color: var(--fg);
   border-color: var(--fg);
+}
+
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#import-modal {
+  width: 560px;
+  max-height: 70vh;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--bg-active);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--pink);
+  margin-bottom: 12px;
+}
+
+.modal-list {
+  overflow-y: auto;
+}
+
+.modal-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.modal-item:hover {
+  background: var(--bg-hover);
+}
+
+.modal-item-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-item-meta {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+.modal-empty {
+  color: var(--fg-dim);
+  font-size: 13px;
+  padding: 12px;
 }
 
 #terminals {
