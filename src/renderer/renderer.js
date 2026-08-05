@@ -18,6 +18,11 @@ function save() {
   window.mimi.saveState(state);
 }
 
+function updateWindowTitle() {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId);
+  document.title = tab ? `${tab.name} — MimiTerm` : 'MimiTerm';
+}
+
 // ---------- sidebar rendering ----------
 
 function render() {
@@ -26,6 +31,7 @@ function render() {
     groupsEl.appendChild(renderGroup(group));
   }
   renderEmptyHint();
+  updateWindowTitle();
 }
 
 function renderGroup(group) {
@@ -510,6 +516,7 @@ async function activateTab(tabId, initialCommand) {
   }
   entry.term.focus();
   updateSidebarActive();
+  updateWindowTitle();
 }
 
 // ---- 同期出力(DECSET 2026)の自前実装 ----
