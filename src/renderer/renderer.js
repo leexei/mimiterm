@@ -410,10 +410,16 @@ window.mimi.onClaudeSessions((sessions) => {
   updateBadges();
 });
 
-window.addEventListener('resize', () => {
+function fitActive() {
   const entry = terms.get(state.activeTabId);
-  if (entry) entry.fit.fit();
-});
+  if (entry && entry.container.classList.contains('visible')) entry.fit.fit();
+}
+
+window.addEventListener('resize', fitActive);
+// ウィンドウリサイズ以外の要因（スクロールバー出現等）でも追従させる
+new ResizeObserver(fitActive).observe(terminalsEl);
+// フォント読み込み完了前に文字幅を計測すると列数がズレて右端が欠けるため、読み込み後に再フィット
+document.fonts.ready.then(fitActive);
 
 document.getElementById('add-group').addEventListener('click', createGroup);
 

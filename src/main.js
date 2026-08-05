@@ -118,12 +118,21 @@ ipcMain.on('state:save', (_e, state) => saveState(state));
 
 ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand }) => {
   if (ptys.has(tabId)) return 'exists';
-  const p = pty.spawn(TMUX, ['new-session', '-A', '-s', tmuxSession], {
+  // MimiTermのタブで起動するClaude Codeは既定でこのモデルを使う
+  // （管理設定のmodelピンより ANTHROPIC_MODEL が優先されることを2026-08-05に実測確認済み。
+  //   state.jsonのsettings.claudeModelで上書き可、空文字で注入無効化）
+  const claudeModel = loadState().settings?.claudeModel ?? 'claude-fable-5';
+  const modelArgs = claudeModel ? ['-e', `ANTHROPIC_MODEL=${claudeModel}`] : [];
+  const p = pty.spawn(TMUX, ['new-session', '-A', ...modelArgs, '-s', tmuxSession], {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
     cwd: os.homedir(),
-    env: { ...process.env, LANG: process.env.LANG || 'ja_JP.UTF-8' },
+    env: {
+      ...process.env,
+      LANG: process.env.LANG || 'ja_JP.UTF-8',
+      ...(claudeModel ? { ANTHROPIC_MODEL: claudeModel } : {}),
+    },
   });
   ptys.set(tabId, p);
   if (initialCommand) {
