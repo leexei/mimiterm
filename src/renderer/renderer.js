@@ -271,9 +271,16 @@ function applyStatus(statusEl, tab) {
     statusEl.title = '考え中…';
   } else if (info) {
     const stale = Date.now() - info.updatedAt > 10 * 60 * 1000;
-    statusEl.className = 'tab-status waiting' + (stale ? ' stale' : '');
-    statusEl.textContent = '●';
-    statusEl.title = stale ? '待機中（10分以上更新なし）' : '応答待ち';
+    if (info.permissionMode === 'plan') {
+      // planモードのまま止まっている = 計画の承認待ちの可能性が高い
+      statusEl.className = 'tab-status plan' + (stale ? ' stale' : '');
+      statusEl.textContent = '📋';
+      statusEl.title = 'planモードで停止中（計画の承認待ちかも）';
+    } else {
+      statusEl.className = 'tab-status waiting' + (stale ? ' stale' : '');
+      statusEl.textContent = '●';
+      statusEl.title = stale ? '待機中（10分以上更新なし）' : '応答待ち';
+    }
   } else {
     statusEl.className = 'tab-status';
     statusEl.textContent = '';

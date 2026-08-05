@@ -271,6 +271,22 @@ ipcMain.handle('claude:list-sessions', () => {
 // rate_limits はアカウント全体の値なので、最も新しいセッションの値を採用する
 let latestRateLimits = null;
 
+// transcript末尾から現在の権限モード（default/plan/acceptEdits等）を読む
+function readPermissionMode(transcriptPath) {
+  try {
+    const st = fs.statSync(transcriptPath);
+    const size = Math.min(st.size, 65536);
+    const buf = Buffer.alloc(size);
+    const fd = fs.openSync(transcriptPath, 'r');
+    fs.readSync(fd, buf, 0, size, st.size - size);
+    fs.closeSync(fd);
+    const matches = [...buf.toString('utf8').matchAll(/"permissionMode":"(\w+)"/g)];
+    return matches.length ? matches[matches.length - 1][1] : null;
+  } catch {
+    return null;
+  }
+}
+
 function collectClaudeSessions() {
   const result = {};
   let files = [];
@@ -290,6 +306,7 @@ function collectClaudeSessions() {
         pct: info.context_window?.used_percentage ?? null,
         model: info.model?.display_name ?? null,
         sessionId: info.session_id ?? null,
+        permissionMode: info.transcript_path ? readPermissionMode(info.transcript_path) : null,
         updatedAt: mtime,
       };
       if (info.rate_limits && mtime > newestMtime) {

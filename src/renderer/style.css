@@ -161,6 +161,10 @@ html, body, #app {
   font-size: 8px;
 }
 
+.tab-status.plan {
+  font-size: 10px;
+}
+
 .tab-status.stale {
   opacity: 0.35;
 }
