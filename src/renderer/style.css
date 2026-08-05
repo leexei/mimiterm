@@ -483,6 +483,17 @@ html, body, #app {
   border-bottom: 1px solid var(--bg-hover);
 }
 
+.qc-mode {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  padding: 2px 6px;
+  border-right: 1px solid var(--bg-hover);
+  margin-right: 2px;
+  user-select: none;
+  white-space: nowrap;
+}
+
 .qc-btn {
   background: var(--bg-hover);
   border: none;

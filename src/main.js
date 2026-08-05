@@ -336,22 +336,31 @@ function collectClaudeSessions() {
 setInterval(() => {
   if (!win || win.isDestroyed()) return;
   // tmuxの出力アクティビティで「考え中(出力が流れている)/応答待ち(静止)」を判定する
-  execFile(TMUX, ['list-panes', '-a', '-F', '#{session_name}\t#{window_activity}'], (err, stdout) => {
-    const activity = {};
-    if (!err) {
-      for (const line of String(stdout).trim().split('\n')) {
-        const [sess, at] = line.split('\t');
-        if (sess && sess.startsWith('mimi-')) activity[sess] = Number(at) * 1000;
+  execFile(
+    TMUX,
+    ['list-panes', '-a', '-F', '#{session_name}\t#{window_activity}\t#{pane_current_command}'],
+    (err, stdout) => {
+      const activity = {};
+      const paneCommands = {};
+      if (!err) {
+        for (const line of String(stdout).trim().split('\n')) {
+          const [sess, at, cmd] = line.split('\t');
+          if (sess && sess.startsWith('mimi-')) {
+            activity[sess] = Number(at) * 1000;
+            paneCommands[sess] = cmd || null;
+          }
+        }
+      }
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('claude:sessions', {
+          sessions: collectClaudeSessions(),
+          activity,
+          paneCommands,
+          rateLimits: latestRateLimits,
+        });
       }
     }
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('claude:sessions', {
-        sessions: collectClaudeSessions(),
-        activity,
-        rateLimits: latestRateLimits,
-      });
-    }
-  });
+  );
 }, 1500);
 
 // 二重起動防止（開発版とパッケージ版の同時起動によるMCPポート競合も防ぐ）

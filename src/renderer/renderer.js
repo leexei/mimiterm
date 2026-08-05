@@ -4,6 +4,7 @@ let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
 let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
 let activityMap = {}; // tmuxSession -> 最終出力アクティビティ(ms epoch)
+let paneCommands = {}; // tmuxSession -> 前面プロセス名（zsh / claude / node 等）
 
 const BUSY_THRESHOLD_MS = 4000;
 const SPIN_FRAMES = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'];
@@ -589,6 +590,7 @@ async function activateTab(tabId, initialCommand) {
   entry.term.focus();
   updateSidebarActive();
   updateWindowTitle();
+  renderQuickbar();
 }
 
 // ---- 同期出力(DECSET 2026)の自前実装 ----
@@ -698,10 +700,12 @@ function renderRateLimits(rl) {
   el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
 }
 
-window.mimi.onClaudeSessions(({ sessions, activity, rateLimits }) => {
+window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
+  paneCommands = cmds ?? {};
   renderRateLimits(rateLimits);
+  renderQuickbar();
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
@@ -813,22 +817,65 @@ document.getElementById('import-session').addEventListener('click', openImportMo
 // ---------- クイックコマンドバー ----------
 // ボタンひとつでアクティブタブのターミナルへコマンド+Enterを流し込む
 
-const DEFAULT_QUICK_COMMANDS = [
-  { label: '📉 compact', command: '/compact' },
-  { label: '🧹 clear', command: '/clear' },
-  { label: '🐱 claude', command: 'claude' },
-  { label: '⏪ claude -c', command: 'claude -c' },
-];
+// モード別ボタンセット: アクティブタブの前面プロセス（tmux pane_current_command）で自動切替
+const DEFAULT_QUICK_COMMANDS_BY_MODE = {
+  claude: [
+    { label: '📉 compact', command: '/compact' },
+    { label: '🧹 clear', command: '/clear' },
+    { label: '🧠 context', command: '/context' },
+    { label: '🔌 mcp', command: '/mcp' },
+  ],
+  shell: [
+    { label: '🐱 claude', command: 'claude' },
+    { label: '⏪ claude -c', command: 'claude -c' },
+    { label: '🌿 git status', command: 'git status' },
+  ],
+};
 
-function quickCommands() {
-  return state.settings?.quickCommands ?? DEFAULT_QUICK_COMMANDS;
+const SHELL_COMMANDS = ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', '-zsh', '-bash'];
+
+function currentMode() {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId);
+  if (!tab) return 'shell';
+  const cmd = paneCommands[tab.tmuxSession];
+  if (!cmd || SHELL_COMMANDS.includes(cmd)) return 'shell';
+  return 'claude';
 }
 
-function saveQuickCommands(list) {
-  state.settings = state.settings || {};
-  state.settings.quickCommands = list;
+function quickCommandsByMode() {
+  const s = (state.settings = state.settings || {});
+  if (!s.quickCommandsByMode) {
+    // 旧形式（フラット配列）からの移行: スラッシュコマンドはclaude用、それ以外はシェル用へ
+    if (Array.isArray(s.quickCommands)) {
+      const claude = s.quickCommands.filter((c) => c.command.startsWith('/'));
+      const shell = s.quickCommands.filter((c) => !c.command.startsWith('/'));
+      s.quickCommandsByMode = {
+        claude: claude.length ? claude : [...DEFAULT_QUICK_COMMANDS_BY_MODE.claude],
+        shell: shell.length ? shell : [...DEFAULT_QUICK_COMMANDS_BY_MODE.shell],
+      };
+      delete s.quickCommands;
+      save();
+    } else {
+      return DEFAULT_QUICK_COMMANDS_BY_MODE;
+    }
+  }
+  return s.quickCommandsByMode;
+}
+
+function quickCommands(mode = currentMode()) {
+  return quickCommandsByMode()[mode] ?? DEFAULT_QUICK_COMMANDS_BY_MODE[mode];
+}
+
+function saveQuickCommands(list, mode = currentMode()) {
+  const s = (state.settings = state.settings || {});
+  const byMode = quickCommandsByMode();
+  s.quickCommandsByMode = {
+    claude: [...(byMode.claude ?? DEFAULT_QUICK_COMMANDS_BY_MODE.claude)],
+    shell: [...(byMode.shell ?? DEFAULT_QUICK_COMMANDS_BY_MODE.shell)],
+  };
+  s.quickCommandsByMode[mode] = list;
   save();
-  renderQuickbar();
+  renderQuickbar(true);
 }
 
 function sendQuick(command) {
@@ -838,10 +885,24 @@ function sendQuick(command) {
   entry.term.focus();
 }
 
-function renderQuickbar() {
+let lastQuickbarKey = null;
+
+function renderQuickbar(force = false) {
+  const mode = currentMode();
+  const list = quickCommands(mode);
+  // 1.5秒ポーリングごとのDOM再構築はドラッグ/ホバーを壊すため、変化があった時だけ描画する
+  const key = mode + JSON.stringify(list);
+  if (!force && key === lastQuickbarKey) return;
+  lastQuickbarKey = key;
+
   const bar = document.getElementById('quickbar');
   bar.innerHTML = '';
-  quickCommands().forEach((qc, i) => {
+  const modeChip = document.createElement('span');
+  modeChip.className = 'qc-mode';
+  modeChip.textContent = mode === 'claude' ? '🤖 claude' : '💻 shell';
+  modeChip.title = 'アクティブタブの状態に応じてボタンセットが切り替わるよ';
+  bar.appendChild(modeChip);
+  list.forEach((qc, i) => {
     const btn = document.createElement('button');
     btn.className = 'qc-btn';
     btn.textContent = qc.label;
@@ -894,9 +955,12 @@ function renderQuickbar() {
 function openQuickAddModal() {
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
+  const mode = currentMode();
   const modal = document.createElement('div');
   modal.className = 'mimi-modal';
-  modal.innerHTML = '<div class="modal-title">クイックコマンドを追加 ⚡</div>';
+  modal.innerHTML = `<div class="modal-title">クイックコマンドを追加 ⚡（${
+    mode === 'claude' ? '🤖 Claude実行中' : '💻 シェル'
+  }用セット）</div>`;
 
   const form = document.createElement('div');
   form.className = 'modal-form';
@@ -911,7 +975,7 @@ function openQuickAddModal() {
     const command = cmdInput.value.trim();
     if (!command) return;
     const label = labelInput.value.trim() || command;
-    saveQuickCommands([...quickCommands(), { label, command }]);
+    saveQuickCommands([...quickCommands(mode), { label, command }], mode);
     overlay.remove();
   };
   okBtn.addEventListener('click', submit);
