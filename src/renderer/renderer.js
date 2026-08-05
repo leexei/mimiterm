@@ -51,6 +51,8 @@ function renderGroup(group) {
     save();
     render();
   });
+  // クリックが折りたたみ→再renderに化けるとdblclickが成立しないため、名前上のclickは止める
+  name.addEventListener('click', (e) => e.stopPropagation());
   name.addEventListener('dblclick', (e) => {
     e.stopPropagation();
     startRename(name, group.name, (v) => {
@@ -97,6 +99,7 @@ function renderTab(tab) {
     'tab' +
     (tab.id === state.activeTabId ? ' active' : '') +
     (entry && !entry.attached ? ' detached' : '');
+  tabEl.dataset.tabId = tab.id;
   tabEl.draggable = true;
 
   const name = document.createElement('span');
@@ -157,6 +160,16 @@ function startRename(spanEl, current, commit) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// active/detached の見た目更新。DOMを作り直すとdblclick等が途切れるため、クラス切替のみ行う
+function updateSidebarActive() {
+  document.querySelectorAll('.tab').forEach((el) => {
+    const id = el.dataset.tabId;
+    const entry = terms.get(id);
+    el.classList.toggle('active', id === state.activeTabId);
+    el.classList.toggle('detached', !!entry && !entry.attached);
+  });
+}
+
 function renderEmptyHint() {
   const existing = document.getElementById('empty-hint');
   if (existing) existing.remove();
@@ -202,6 +215,7 @@ function createTab(groupId) {
   const group = state.groups.find((g) => g.id === groupId);
   if (group) group.collapsed = false;
   save();
+  render();
   activateTab(tab.id);
 }
 
@@ -277,7 +291,7 @@ async function activateTab(tabId) {
     });
   }
   entry.term.focus();
-  render();
+  updateSidebarActive();
 }
 
 window.mimi.onPtyData((tabId, data) => {
@@ -291,7 +305,7 @@ window.mimi.onPtyExit((tabId) => {
     entry.attached = false;
     entry.term.write('\r\n\x1b[90m[MimiTerm] セッションが終了しました。タブをクリックすると再接続します 🐾\x1b[0m\r\n');
   }
-  render();
+  updateSidebarActive();
 });
 
 window.addEventListener('resize', () => {
