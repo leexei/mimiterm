@@ -1,0 +1,20 @@
+{
+  "name": "mimiterm",
+  "version": "0.1.0",
+  "description": "MimiTerm — a Claude Code-native terminal with tab groups, backed by tmux",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^33.0.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0"
+  }
+}
