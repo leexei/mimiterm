@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "package": "electron-packager . MimiTerm --overwrite --icon=assets/icon.icns --out=dist"
+    "package": "electron-packager . MimiTerm --overwrite --no-asar --icon=assets/icon.icns --out=dist"
   },
   "license": "MIT",
   "devDependencies": {
