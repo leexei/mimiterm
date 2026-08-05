@@ -15,6 +15,18 @@ const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
 const TMUX = TMUX_CANDIDATES.find((p) => fs.existsSync(p)) || 'tmux';
 
+// 同期出力(DECSET 2026)を外側ターミナル(=MimiTerm)へ通すようtmuxへ宣言する。
+// レンダラー側で2026をパースしてバッファ描画するため、Claude Code等の再描画がちらつかない
+const TMUX_CONF = path.join(STATE_DIR, 'tmux.conf');
+function ensureTmuxConf() {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(TMUX_CONF, "set -s terminal-features 'xterm*:sync'\n");
+}
+function applyTmuxSyncFeature() {
+  // 既に起動中のtmuxサーバーにも反映（サーバー未起動ならエラーになるだけなので無視）
+  execFile(TMUX, ['set', '-s', 'terminal-features', 'xterm*:sync'], () => {});
+}
+
 const ptys = new Map(); // tabId -> IPty
 
 function defaultState() {
@@ -123,7 +135,8 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
   //   state.jsonのsettings.claudeModelで上書き可、空文字で注入無効化）
   const claudeModel = loadState().settings?.claudeModel ?? 'claude-fable-5';
   const modelArgs = claudeModel ? ['-e', `ANTHROPIC_MODEL=${claudeModel}`] : [];
-  const p = pty.spawn(TMUX, ['new-session', '-A', ...modelArgs, '-s', tmuxSession], {
+  ensureTmuxConf();
+  const p = pty.spawn(TMUX, ['-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession], {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
@@ -282,10 +295,21 @@ function collectClaudeSessions() {
 }
 
 setInterval(() => {
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('claude:sessions', collectClaudeSessions());
-  }
-}, 2000);
+  if (!win || win.isDestroyed()) return;
+  // tmuxの出力アクティビティで「考え中(出力が流れている)/応答待ち(静止)」を判定する
+  execFile(TMUX, ['list-panes', '-a', '-F', '#{session_name}\t#{window_activity}'], (err, stdout) => {
+    const activity = {};
+    if (!err) {
+      for (const line of String(stdout).trim().split('\n')) {
+        const [sess, at] = line.split('\t');
+        if (sess && sess.startsWith('mimi-')) activity[sess] = Number(at) * 1000;
+      }
+    }
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('claude:sessions', { sessions: collectClaudeSessions(), activity });
+    }
+  });
+}, 1500);
 
 // 二重起動防止（開発版とパッケージ版の同時起動によるMCPポート競合も防ぐ）
 if (!app.requestSingleInstanceLock()) {
@@ -306,6 +330,7 @@ if (!app.requestSingleInstanceLock()) {
       app.dock.setIcon(devIcon);
     }
     createWindow();
+    applyTmuxSyncFeature();
     startMcpServer({
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,

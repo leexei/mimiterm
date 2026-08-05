@@ -3,6 +3,11 @@
 let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
 let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
+let activityMap = {}; // tmuxSession -> 最終出力アクティビティ(ms epoch)
+
+const BUSY_THRESHOLD_MS = 4000;
+const SPIN_FRAMES = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'];
+let spinFrame = 0;
 
 const groupsEl = document.getElementById('groups');
 const terminalsEl = document.getElementById('terminals');
@@ -103,6 +108,11 @@ function renderTab(tab) {
   tabEl.dataset.tabId = tab.id;
   tabEl.draggable = true;
 
+  const status = document.createElement('span');
+  status.className = 'tab-status';
+  tabEl.appendChild(status);
+  applyStatus(status, tab);
+
   if (tab.badgeEmoji) {
     const emoji = document.createElement('span');
     emoji.className = 'emoji-badge';
@@ -147,7 +157,38 @@ function renderTab(tab) {
     e.dataTransfer.setData('text/tab-id', tab.id);
   });
 
+  // タブ上へのドロップ = 並び替え（マウス位置で前後どちらに挿すか決める）
+  tabEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const before = e.offsetY < tabEl.offsetHeight / 2;
+    tabEl.classList.toggle('drop-before', before);
+    tabEl.classList.toggle('drop-after', !before);
+  });
+  tabEl.addEventListener('dragleave', () => {
+    tabEl.classList.remove('drop-before', 'drop-after');
+  });
+  tabEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const before = tabEl.classList.contains('drop-before');
+    tabEl.classList.remove('drop-before', 'drop-after');
+    const draggedId = e.dataTransfer.getData('text/tab-id');
+    moveTabRelative(draggedId, tab, before);
+  });
+
   return tabEl;
+}
+
+function moveTabRelative(draggedId, targetTab, before) {
+  const dragged = state.tabs.find((t) => t.id === draggedId);
+  if (!dragged || dragged.id === targetTab.id) return;
+  state.tabs = state.tabs.filter((t) => t.id !== draggedId);
+  dragged.groupId = targetTab.groupId;
+  const idx = state.tabs.findIndex((t) => t.id === targetTab.id) + (before ? 0 : 1);
+  state.tabs.splice(idx, 0, dragged);
+  save();
+  render();
 }
 
 function iconButton(label, title, onClick) {
@@ -181,6 +222,33 @@ function startRename(spanEl, current, commit) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// タブの稼働状態: 出力が流れている=考え中(スピナー) / Claudeセッションありで静止=応答待ち(●)
+function applyStatus(statusEl, tab) {
+  const act = activityMap[tab.tmuxSession];
+  const info = claudeSessions[tab.tmuxSession];
+  if (act && Date.now() - act < BUSY_THRESHOLD_MS) {
+    statusEl.className = 'tab-status busy';
+    statusEl.textContent = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
+    statusEl.title = '考え中…';
+  } else if (info) {
+    const stale = Date.now() - info.updatedAt > 10 * 60 * 1000;
+    statusEl.className = 'tab-status waiting' + (stale ? ' stale' : '');
+    statusEl.textContent = '●';
+    statusEl.title = stale ? '待機中（10分以上更新なし）' : '応答待ち';
+  } else {
+    statusEl.className = 'tab-status';
+    statusEl.textContent = '';
+    statusEl.title = '';
+  }
+}
+
+setInterval(() => {
+  spinFrame++;
+  document.querySelectorAll('.tab-status.busy').forEach((el) => {
+    el.textContent = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
+  });
+}, 280);
+
 // Claude Code コンテキスト使用率バッジ（statusline-tap.sh 経由の情報）
 function applyBadge(badgeEl, tab) {
   const info = claudeSessions[tab.tmuxSession];
@@ -200,8 +268,11 @@ function applyBadge(badgeEl, tab) {
 function updateBadges() {
   document.querySelectorAll('.tab').forEach((el) => {
     const tab = state.tabs.find((t) => t.id === el.dataset.tabId);
+    if (!tab) return;
     const badgeEl = el.querySelector('.tab-badge');
-    if (tab && badgeEl) applyBadge(badgeEl, tab);
+    if (badgeEl) applyBadge(badgeEl, tab);
+    const statusEl = el.querySelector('.tab-status');
+    if (statusEl) applyStatus(statusEl, tab);
   });
 }
 
@@ -367,7 +438,17 @@ function ensureTerm(tab) {
   term.onData((data) => window.mimi.ptyInput(tab.id, data));
   term.onResize(({ cols, rows }) => window.mimi.ptyResize(tab.id, cols, rows));
 
-  entry = { term, fit, container, attached: false, webgl: null };
+  entry = {
+    term,
+    fit,
+    container,
+    attached: false,
+    webgl: null,
+    syncing: false,
+    syncBuf: [],
+    syncCarry: '',
+    syncTimer: null,
+  };
   terms.set(tab.id, entry);
   syncRenderer(entry);
   return entry;
@@ -398,9 +479,65 @@ async function activateTab(tabId, initialCommand) {
   updateSidebarActive();
 }
 
+// ---- 同期出力(DECSET 2026)の自前実装 ----
+// xterm.js 5.5は2026未対応のため、BSU(ESC[?2026h)〜ESU(ESC[?2026l)間の出力をバッファし
+// ESUで一括writeすることで、Claude Code等の画面再描画を原子的に反映する（ガタつき防止）
+const SYNC_PREFIX = '\x1b[?2026';
+const SYNC_MARKER_LEN = SYNC_PREFIX.length + 1;
+
+function emitData(entry, text) {
+  if (!text) return;
+  if (entry.syncing) entry.syncBuf.push(text);
+  else entry.term.write(text);
+}
+
+function endSync(entry) {
+  if (!entry.syncing) return;
+  clearTimeout(entry.syncTimer);
+  entry.syncing = false;
+  const text = entry.syncBuf.join('');
+  entry.syncBuf = [];
+  if (text) entry.term.write(text);
+}
+
+function startSync(entry) {
+  if (entry.syncing) return;
+  entry.syncing = true;
+  entry.syncBuf = [];
+  // ESUが届かない場合の安全弁（描画が止まりっぱなしにならないように）
+  entry.syncTimer = setTimeout(() => endSync(entry), 100);
+}
+
+function feedData(entry, data) {
+  let s = entry.syncCarry + data;
+  entry.syncCarry = '';
+  // 末尾がマーカーの途中で切れている可能性があれば持ち越す
+  for (let len = SYNC_PREFIX.length; len >= 1; len--) {
+    if (s.length >= len && s.endsWith(SYNC_PREFIX.slice(0, len))) {
+      entry.syncCarry = s.slice(s.length - len);
+      s = s.slice(0, s.length - len);
+      break;
+    }
+  }
+  let pos = 0;
+  while (pos < s.length) {
+    const idx = s.indexOf(SYNC_PREFIX, pos);
+    if (idx === -1) {
+      emitData(entry, s.slice(pos));
+      break;
+    }
+    emitData(entry, s.slice(pos, idx));
+    const mode = s[idx + SYNC_PREFIX.length];
+    if (mode === 'h') startSync(entry);
+    else if (mode === 'l') endSync(entry);
+    else emitData(entry, s.slice(idx, idx + SYNC_MARKER_LEN)); // 2026以外(例:20261)はそのまま流す
+    pos = idx + SYNC_MARKER_LEN;
+  }
+}
+
 window.mimi.onPtyData((tabId, data) => {
   const entry = terms.get(tabId);
-  if (entry) entry.term.write(data);
+  if (entry) feedData(entry, data);
 });
 
 window.mimi.onPtyExit((tabId) => {
@@ -419,8 +556,9 @@ window.mimi.onStateReload((newState) => {
   render();
 });
 
-window.mimi.onClaudeSessions((sessions) => {
+window.mimi.onClaudeSessions(({ sessions, activity }) => {
   claudeSessions = sessions;
+  activityMap = activity;
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
