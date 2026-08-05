@@ -665,6 +665,7 @@ window.mimi.onPtyExit((tabId) => {
 window.mimi.onStateReload((newState) => {
   state = newState;
   applySettings();
+  renderQuickbar();
   render();
 });
 
@@ -754,7 +755,7 @@ async function openImportModal() {
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
   const modal = document.createElement('div');
-  modal.id = 'import-modal';
+  modal.className = 'mimi-modal';
   modal.innerHTML = '<div class="modal-title">Claude セッションを取り込む 🐾</div>';
 
   const listEl = document.createElement('div');
@@ -809,12 +810,110 @@ async function importSession(s) {
 
 document.getElementById('import-session').addEventListener('click', openImportModal);
 
+// ---------- クイックコマンドバー ----------
+// ボタンひとつでアクティブタブのターミナルへコマンド+Enterを流し込む
+
+const DEFAULT_QUICK_COMMANDS = [
+  { label: '📉 compact', command: '/compact' },
+  { label: '🧹 clear', command: '/clear' },
+  { label: '🐱 claude', command: 'claude' },
+  { label: '⏪ claude -c', command: 'claude -c' },
+];
+
+function quickCommands() {
+  return state.settings?.quickCommands ?? DEFAULT_QUICK_COMMANDS;
+}
+
+function saveQuickCommands(list) {
+  state.settings = state.settings || {};
+  state.settings.quickCommands = list;
+  save();
+  renderQuickbar();
+}
+
+function sendQuick(command) {
+  const entry = terms.get(state.activeTabId);
+  if (!entry || !entry.attached) return;
+  window.mimi.ptyInput(state.activeTabId, command + '\r');
+  entry.term.focus();
+}
+
+function renderQuickbar() {
+  const bar = document.getElementById('quickbar');
+  bar.innerHTML = '';
+  quickCommands().forEach((qc, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'qc-btn';
+    btn.textContent = qc.label;
+    btn.title = `「${qc.command}」を入力して実行（右クリックで削除）`;
+    btn.addEventListener('click', () => sendQuick(qc.command));
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!confirm(`ボタン「${qc.label}」を削除しますか？`)) return;
+      const list = [...quickCommands()];
+      list.splice(i, 1);
+      saveQuickCommands(list);
+    });
+    bar.appendChild(btn);
+  });
+  const add = document.createElement('button');
+  add.className = 'qc-btn qc-add';
+  add.textContent = '＋';
+  add.title = 'クイックコマンドを追加';
+  add.addEventListener('click', openQuickAddModal);
+  bar.appendChild(add);
+}
+
+function openQuickAddModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'mimi-modal';
+  modal.innerHTML = '<div class="modal-title">クイックコマンドを追加 ⚡</div>';
+
+  const form = document.createElement('div');
+  form.className = 'modal-form';
+  const cmdInput = document.createElement('input');
+  cmdInput.placeholder = '入力するコマンド（例: /compact、claude --resume）';
+  const labelInput = document.createElement('input');
+  labelInput.placeholder = 'ボタン名（省略時はコマンドがそのまま表示）';
+  const okBtn = document.createElement('button');
+  okBtn.textContent = '追加する';
+
+  const submit = () => {
+    const command = cmdInput.value.trim();
+    if (!command) return;
+    const label = labelInput.value.trim() || command;
+    saveQuickCommands([...quickCommands(), { label, command }]);
+    overlay.remove();
+  };
+  okBtn.addEventListener('click', submit);
+  [cmdInput, labelInput].forEach((input) =>
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+      if (e.key === 'Escape') overlay.remove();
+    })
+  );
+
+  form.appendChild(cmdInput);
+  form.appendChild(labelInput);
+  form.appendChild(okBtn);
+  modal.appendChild(form);
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  cmdInput.focus();
+}
+
 // ---------- init ----------
 
 (async () => {
   state = await window.mimi.loadState();
   // 前回セッションのPTYは再起動で消えているため、attach状態はリセットして描画する
   applySettings();
+  renderQuickbar();
   render();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {
     activateTab(state.activeTabId);

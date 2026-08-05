@@ -383,7 +383,7 @@ html, body, #app {
   z-index: 100;
 }
 
-#import-modal {
+.mimi-modal {
   width: 560px;
   max-height: 70vh;
   background: var(--bg-sidebar);
@@ -392,6 +392,38 @@ html, body, #app {
   padding: 16px;
   display: flex;
   flex-direction: column;
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-form input {
+  background: var(--bg);
+  border: 1px solid var(--bg-active);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.modal-form input:focus {
+  border-color: var(--accent);
+}
+
+.modal-form button {
+  align-self: flex-end;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #11111b;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 16px;
+  cursor: pointer;
 }
 
 .modal-title {
@@ -432,6 +464,49 @@ html, body, #app {
   color: var(--fg-dim);
   font-size: 13px;
   padding: 12px;
+}
+
+#main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--bg-hover);
+}
+
+.qc-btn {
+  background: var(--bg-hover);
+  border: none;
+  border-radius: 12px;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qc-btn:hover {
+  background: var(--bg-active);
+}
+
+.qc-btn.qc-add {
+  background: none;
+  border: 1px dashed var(--fg-dim);
+  color: var(--fg-dim);
+}
+
+.qc-btn.qc-add:hover {
+  color: var(--fg);
+  border-color: var(--fg);
 }
 
 #terminals {
