@@ -4,7 +4,8 @@ let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
 let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
 let activityMap = {}; // tmuxSession -> 最終出力アクティビティ(ms epoch)
-let workingMap = {}; // tmuxSession -> 作業中判定（main側で出力/transcript/画面マーカーの3信号から算出）
+let workingMap = {}; // tmuxSession -> 作業中判定（main側で複数信号から算出）
+let shellProcsMap = {}; // tmuxSession -> シェル配下でバックグラウンドジョブ実行中
 let paneCommands = {}; // tmuxSession -> 前面プロセス名（zsh / claude / node 等）
 const SPIN_FRAMES = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'];
 let spinFrame = 0;
@@ -335,11 +336,24 @@ function showPreview(tabEl, tab, text) {
 // タブの稼働状態: 出力が流れている=考え中(スピナー) / Claudeセッションありで静止=応答待ち(●)
 function applyStatus(statusEl, tab) {
   const info = claudeSessions[tab.tmuxSession];
-  if (workingMap[tab.tmuxSession]) {
+  const cmd = paneCommands[tab.tmuxSession];
+  const isShell = !cmd || SHELL_COMMANDS.includes(cmd);
+  const isClaudeCmd = cmd === 'claude.exe' || cmd === 'claude' || cmd === 'node';
+  if (!isShell && !isClaudeCmd) {
+    // Claude以外のプロセスが前面で動いてる（モニター・tail・ビルド・エディタ等）
+    statusEl.className = 'tab-status proc';
+    statusEl.textContent = '⚙';
+    statusEl.title = `実行中: ${cmd}`;
+  } else if (isShell && shellProcsMap[tab.tmuxSession]) {
+    // シェルのままバックグラウンドジョブが動いてる
+    statusEl.className = 'tab-status proc';
+    statusEl.textContent = '⚙';
+    statusEl.title = 'バックグラウンドジョブ実行中';
+  } else if (isClaudeCmd && workingMap[tab.tmuxSession]) {
     statusEl.className = 'tab-status busy';
     statusEl.textContent = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
     statusEl.title = '考え中…';
-  } else if (info) {
+  } else if (isClaudeCmd && info) {
     const stale = Date.now() - info.updatedAt > 10 * 60 * 1000;
     if (info.permissionMode === 'plan') {
       // planモードのまま止まっている = 計画の承認待ちの可能性が高い
@@ -730,10 +744,11 @@ function renderRateLimits(rl) {
   el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
 }
 
-window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working, rateLimits }) => {
+window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working, shellProcs, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
   workingMap = working ?? {};
+  shellProcsMap = shellProcs ?? {};
   paneCommands = cmds ?? {};
   renderRateLimits(rateLimits);
   renderQuickbar();

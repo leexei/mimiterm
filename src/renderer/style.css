@@ -200,6 +200,11 @@ html, body, #app {
   font-size: 10px;
 }
 
+.tab-status.proc {
+  color: var(--accent);
+  font-size: 11px;
+}
+
 .tab-status.stale {
   opacity: 0.35;
 }

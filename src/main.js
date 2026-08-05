@@ -636,6 +636,14 @@ setInterval(async () => {
   const procSnap = await processSnapshot();
   const agentActive = collectAgentActivity(sessions, now);
   const working = {};
+  // シェルのままバックグラウンドジョブ（cmd & 等）が動いているペインの検出
+  const shellProcs = {};
+  for (const sess of Object.keys(activity)) {
+    const isShell = !paneCommands[sess] || SHELL_CMDS.includes(paneCommands[sess]);
+    if (isShell && panePids[sess] && (procSnap.children.get(panePids[sess]) || []).length > 0) {
+      shellProcs[sess] = true;
+    }
+  }
   for (const sess of Object.keys(activity)) {
     // 1) 出力が直近流れている（ストリーミング・スピナー描画中）
     if (now - activity[sess] < 4000) {
@@ -671,6 +679,7 @@ setInterval(async () => {
       activity,
       paneCommands,
       working,
+      shellProcs,
       rateLimits: latestRateLimits,
     });
   }
