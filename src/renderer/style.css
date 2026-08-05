@@ -498,6 +498,14 @@ html, body, #app {
   background: var(--bg-active);
 }
 
+.qc-btn.drop-left {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.qc-btn.drop-right {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
 .qc-btn.qc-add {
   background: none;
   border: 1px dashed var(--fg-dim);

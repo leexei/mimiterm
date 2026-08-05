@@ -854,6 +854,33 @@ function renderQuickbar() {
       list.splice(i, 1);
       saveQuickCommands(list);
     });
+    // ドラッグで並び替え（左右どちらに挿すかはマウス位置で判定）
+    btn.draggable = true;
+    btn.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/qc-index', String(i));
+    });
+    btn.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes('text/qc-index')) return;
+      e.preventDefault();
+      const rect = btn.getBoundingClientRect();
+      const before = e.clientX - rect.left < rect.width / 2;
+      btn.classList.toggle('drop-left', before);
+      btn.classList.toggle('drop-right', !before);
+    });
+    btn.addEventListener('dragleave', () => btn.classList.remove('drop-left', 'drop-right'));
+    btn.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const before = btn.classList.contains('drop-left');
+      btn.classList.remove('drop-left', 'drop-right');
+      const from = Number(e.dataTransfer.getData('text/qc-index'));
+      if (!Number.isInteger(from) || from === i) return;
+      const list = [...quickCommands()];
+      const [moved] = list.splice(from, 1);
+      let to = i + (before ? 0 : 1);
+      if (from < to) to--;
+      list.splice(to, 0, moved);
+      saveQuickCommands(list);
+    });
     bar.appendChild(btn);
   });
   const add = document.createElement('button');
