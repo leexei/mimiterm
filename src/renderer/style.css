@@ -268,6 +268,71 @@ html, body, #app {
   border-color: var(--fg);
 }
 
+#rate-limits {
+  margin-top: 10px;
+  padding: 8px 6px 2px;
+  border-top: 1px solid var(--bg-hover);
+  user-select: none;
+}
+
+.rl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 10px;
+}
+
+.rl-label {
+  width: 18px;
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+
+.rl-bar {
+  flex: 1;
+  height: 5px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rl-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.rl-fill.low {
+  background: #a6e3a1;
+}
+
+.rl-fill.mid {
+  background: #f9e2af;
+}
+
+.rl-fill.high {
+  background: #f38ba8;
+}
+
+.rl-pct {
+  width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-pct.low {
+  color: #a6e3a1;
+}
+
+.rl-pct.mid {
+  color: #f9e2af;
+}
+
+.rl-pct.high {
+  color: #f38ba8;
+}
+
 #modal-overlay {
   position: fixed;
   inset: 0;

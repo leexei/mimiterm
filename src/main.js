@@ -268,6 +268,9 @@ ipcMain.handle('claude:list-sessions', () => {
 });
 
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
+// rate_limits はアカウント全体の値なので、最も新しいセッションの値を採用する
+let latestRateLimits = null;
+
 function collectClaudeSessions() {
   const result = {};
   let files = [];
@@ -276,17 +279,23 @@ function collectClaudeSessions() {
   } catch {
     return result;
   }
+  let newestMtime = 0;
   for (const file of files) {
     try {
       const full = path.join(SESSIONS_DIR, file);
       const info = JSON.parse(fs.readFileSync(full, 'utf8'));
       const tmuxSession = file.replace(/\.json$/, '');
+      const mtime = fs.statSync(full).mtimeMs;
       result[tmuxSession] = {
         pct: info.context_window?.used_percentage ?? null,
         model: info.model?.display_name ?? null,
         sessionId: info.session_id ?? null,
-        updatedAt: fs.statSync(full).mtimeMs,
+        updatedAt: mtime,
       };
+      if (info.rate_limits && mtime > newestMtime) {
+        newestMtime = mtime;
+        latestRateLimits = { ...info.rate_limits, updatedAt: mtime };
+      }
     } catch {
       // 書き込み途中・壊れたファイルはスキップ
     }
@@ -306,7 +315,11 @@ setInterval(() => {
       }
     }
     if (win && !win.isDestroyed()) {
-      win.webContents.send('claude:sessions', { sessions: collectClaudeSessions(), activity });
+      win.webContents.send('claude:sessions', {
+        sessions: collectClaudeSessions(),
+        activity,
+        rateLimits: latestRateLimits,
+      });
     }
   });
 }, 1500);

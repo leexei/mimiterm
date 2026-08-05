@@ -589,9 +589,39 @@ window.mimi.onStateReload((newState) => {
   render();
 });
 
-window.mimi.onClaudeSessions(({ sessions, activity }) => {
+// Claude 全体の利用制限（5時間 / 7日ウィンドウ）をサイドバー下部に表示
+function renderRateLimits(rl) {
+  const el = document.getElementById('rate-limits');
+  if (!rl) {
+    el.innerHTML = '';
+    return;
+  }
+  const row = (label, win) => {
+    if (!win || win.used_percentage == null) return '';
+    const pct = Math.round(win.used_percentage);
+    const level = pct >= 90 ? 'high' : pct >= 70 ? 'mid' : 'low';
+    const resets = win.resets_at
+      ? new Date(win.resets_at * 1000).toLocaleString('ja-JP', {
+          month: 'numeric',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '';
+    return `
+      <div class="rl-row" title="リセット: ${resets}">
+        <span class="rl-label">${label}</span>
+        <span class="rl-bar"><span class="rl-fill ${level}" style="width:${Math.min(100, pct)}%"></span></span>
+        <span class="rl-pct ${level}">${pct}%</span>
+      </div>`;
+  };
+  el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
+}
+
+window.mimi.onClaudeSessions(({ sessions, activity, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
+  renderRateLimits(rateLimits);
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
