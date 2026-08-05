@@ -30,7 +30,8 @@ function applyTmuxSyncFeature() {
 const ptys = new Map(); // tabId -> IPty
 
 function defaultState() {
-  const today = new Date().toISOString().slice(0, 10);
+  // toISOStringはUTCで、JSTの0時〜9時に日付がズレるためローカル日付を使う
+  const today = new Date().toLocaleDateString('sv-SE');
   const groupId = 'g-' + Date.now().toString(36);
   return {
     groups: [{ id: groupId, name: `📅 ${today}`, collapsed: false }],
@@ -424,6 +425,53 @@ ipcMain.handle('claude:list-sessions', () => {
   return top.filter((s) => s.cwd);
 });
 
+// ---------- 今日パネル: calendar-helper.sh (icalBuddy) から今日の予定を取得 ----------
+const CALENDAR_HELPER = path.join(os.homedir(), 'scripts', 'calendar-helper.sh');
+
+function parseCalendarOutput(text) {
+  const events = [];
+  let current = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const bullet = line.match(/^• (.*)$/);
+    if (bullet) {
+      if (current) events.push(current);
+      const time = bullet[1].match(/^(\d{2}:\d{2}) - (\d{2}:\d{2})$/);
+      current = time
+        ? { start: time[1], end: time[2], title: null, allDay: false }
+        : { start: null, end: null, title: bullet[1], allDay: true };
+    } else if (current && /^\s+\S/.test(line)) {
+      const body = line.trim();
+      if (!current.title && !body.startsWith('location:')) current.title = body;
+    }
+  }
+  if (current) events.push(current);
+  return events.filter((e) => e.title);
+}
+
+let calendarCache = null;
+
+function refreshCalendar() {
+  if (!fs.existsSync(CALENDAR_HELPER)) return;
+  execFile(
+    '/bin/bash',
+    [CALENDAR_HELPER, 'today'],
+    {
+      timeout: 30000,
+      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
+    },
+    (err, stdout) => {
+      if (err) return;
+      calendarCache = { events: parseCalendarOutput(String(stdout)), fetchedAt: Date.now() };
+      if (win && !win.isDestroyed()) win.webContents.send('calendar:update', calendarCache);
+    }
+  );
+}
+
+setInterval(refreshCalendar, 5 * 60 * 1000);
+
+ipcMain.handle('calendar:get', () => calendarCache);
+
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
 // rate_limits はアカウント全体の値なので、最も新しいセッションの値を採用する
 let latestRateLimits = null;
@@ -527,6 +575,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     applyTmuxSyncFeature();
+    refreshCalendar();
     startMcpServer({
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,

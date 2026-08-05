@@ -47,6 +47,41 @@ html, body, #app {
   padding: 4px 8px 12px;
 }
 
+#today-panel {
+  margin: 0 2px 10px;
+  padding: 8px 10px;
+  background: var(--bg-hover);
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  user-select: none;
+}
+
+.tp-head {
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.tp-next {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-next.ongoing {
+  color: #a6e3a1;
+}
+
+.tp-next.done {
+  color: var(--fg-dim);
+}
+
+.tp-due {
+  color: #fab387;
+  font-weight: 600;
+}
+
 #groups {
   flex: 1;
   overflow-y: auto;
@@ -190,6 +225,12 @@ html, body, #app {
   padding: 1px 5px;
   border-radius: 8px;
   white-space: nowrap;
+}
+
+.schedule-chip.due {
+  color: #fab387;
+  background: rgba(250, 179, 135, 0.18);
+  font-weight: 700;
 }
 
 .tab-badge {

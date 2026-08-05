@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('mimi', {
   onStateReload: (cb) => ipcRenderer.on('state:reload', (_e, state) => cb(state)),
   browserAttached: (webContentsId) => ipcRenderer.send('browser:attached', webContentsId),
   onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
+  getCalendar: () => ipcRenderer.invoke('calendar:get'),
+  onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
 });

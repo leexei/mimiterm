@@ -59,6 +59,7 @@ function tabSummary(state, tab, claudeSessions) {
     model: info?.model ?? null,
     badge: tab.badgeEmoji ?? null,
     scheduledFor: tab.scheduledFor ?? null,
+    dueToday: !!(tab.scheduledFor && tab.scheduledFor <= new Date().toLocaleDateString('sv-SE')),
   };
 }
 

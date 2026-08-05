@@ -15,6 +15,9 @@ const terminalsEl = document.getElementById('terminals');
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
+// ローカル(JST)のYYYY-MM-DD。toISOStringはUTCで0〜9時にズレるので使わない
+const localToday = () => new Date().toLocaleDateString('sv-SE');
+
 function save() {
   window.mimi.saveState(state);
 }
@@ -33,6 +36,7 @@ function render() {
   }
   renderEmptyHint();
   updateWindowTitle();
+  renderTodayPanel();
 }
 
 function renderGroup(group) {
@@ -163,10 +167,11 @@ function renderTab(tab) {
   tabEl.appendChild(name);
 
   if (tab.scheduledFor) {
+    const due = tab.scheduledFor <= localToday();
     const chip = document.createElement('span');
-    chip.className = 'schedule-chip';
-    chip.textContent = `⏳${tab.scheduledFor.slice(5).replace('-', '/')}`;
-    chip.title = `再開予定: ${tab.scheduledFor}`;
+    chip.className = 'schedule-chip' + (due ? ' due' : '');
+    chip.textContent = `${due ? '⏰' : '⏳'}${tab.scheduledFor.slice(5).replace('-', '/')}`;
+    chip.title = due ? `再開予定日が来ています: ${tab.scheduledFor}` : `再開予定: ${tab.scheduledFor}`;
     tabEl.appendChild(chip);
   }
 
@@ -416,8 +421,7 @@ function renderEmptyHint() {
 // ---------- groups / tabs ----------
 
 function createGroup() {
-  const today = new Date().toISOString().slice(0, 10);
-  state.groups.push({ id: uid('g'), name: `📅 ${today}`, collapsed: false });
+  state.groups.push({ id: uid('g'), name: `📅 ${localToday()}`, collapsed: false });
   save();
   render();
 }
@@ -1037,6 +1041,76 @@ function openQuickAddModal() {
   cmdInput.focus();
 }
 
+// ---------- 今日パネル（カレンダー × 期日タブ） ----------
+
+let calendar = null; // { events: [{start,end,title,allDay}], fetchedAt }
+
+function nowHHMM() {
+  return new Date().toTimeString().slice(0, 5);
+}
+
+// 09:00-18:00 の勤務窓から、時刻付き予定を除いた残り空き時間(h)を出す
+function calcFreeHours(events) {
+  const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+  const winStart = Math.max(toMin('09:00'), toMin(nowHHMM()));
+  const winEnd = toMin('18:00');
+  if (winStart >= winEnd) return 0;
+  const busy = events
+    .filter((e) => !e.allDay)
+    .map((e) => [Math.max(toMin(e.start), winStart), Math.min(toMin(e.end), winEnd)])
+    .filter(([s, e]) => s < e)
+    .sort((a, b) => a[0] - b[0]);
+  let free = 0;
+  let cursor = winStart;
+  for (const [s, e] of busy) {
+    if (s > cursor) free += s - cursor;
+    cursor = Math.max(cursor, e);
+  }
+  free += Math.max(0, winEnd - cursor);
+  return Math.round((free / 60) * 10) / 10;
+}
+
+function renderTodayPanel() {
+  const panel = document.getElementById('today-panel');
+  const dueTabs = state.tabs.filter((t) => t.scheduledFor && t.scheduledFor <= localToday());
+  if (!calendar && dueTabs.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  const d = new Date();
+  const dateLabel = `${d.getMonth() + 1}/${d.getDate()}(${'日月火水木金土'[d.getDay()]})`;
+  let html = '';
+  if (calendar) {
+    const events = calendar.events;
+    const now = nowHHMM();
+    const remaining = events.filter((e) => !e.allDay && e.end > now);
+    const ongoing = remaining.find((e) => e.start <= now);
+    const next = remaining.find((e) => e.start > now);
+    html += `<div class="tp-head">📅 ${dateLabel} ・ MTG残り${remaining.length}件 ・ 空き${calcFreeHours(events)}h</div>`;
+    if (ongoing) html += `<div class="tp-next ongoing">▶ ${ongoing.start}-${ongoing.end} ${escapeHtml(ongoing.title)}</div>`;
+    if (next) html += `<div class="tp-next">🕐 ${next.start} ${escapeHtml(next.title)}</div>`;
+    if (!ongoing && !next) html += `<div class="tp-next done">✨ 今日のMTGは終了</div>`;
+  } else {
+    html += `<div class="tp-head">📅 ${dateLabel}</div>`;
+  }
+  if (dueTabs.length > 0) {
+    html += `<div class="tp-due">⏰ 今日が再開日のタブ ${dueTabs.length}件</div>`;
+  }
+  panel.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+window.mimi.onCalendarUpdate((data) => {
+  calendar = data;
+  renderTodayPanel();
+});
+
+setInterval(renderTodayPanel, 60 * 1000);
+
 // ---------- 埋め込みブラウザペイン ----------
 
 const browserPane = document.getElementById('browser-pane');
@@ -1186,6 +1260,8 @@ window.mimi.onBrowserOpen((url) => openBrowserPane(url));
   renderQuickbar();
   render();
   renderBookmarks();
+  calendar = await window.mimi.getCalendar();
+  renderTodayPanel();
   if (browserSettings().visible) openBrowserPane();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {
     activateTab(state.activeTabId);
