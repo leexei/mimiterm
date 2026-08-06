@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -542,6 +542,26 @@ function collectClaudeSessions() {
   return result;
 }
 
+// ---------- 通知（アプリ→ユーザー方向） ----------
+// タブが「考え中→応答待ち」に変わった時と、コンテキストが70%を超えた時に知らせる
+const workingStreak = new Map(); // tmuxSession -> 連続で作業中だったtick数
+const notifiedWaiting = new Set(); // 応答待ち通知済みのセッション（再作業で解除）
+const ctxAlerted = new Set(); // コンテキスト70%通知済みのセッション（60%未満に下がると解除）
+
+function notifyTab(tab, body) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title: `MimiTerm — ${tab.name}`, body });
+  n.on('click', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      win.webContents.send('tab:activate', tab.id);
+    }
+  });
+  n.show();
+}
+
 const execFileP = (cmd, args, opts = {}) =>
   new Promise((resolve) => execFile(cmd, args, opts, (err, stdout) => resolve(err ? null : String(stdout))));
 
@@ -676,6 +696,44 @@ setInterval(async () => {
       working[sess] = true;
     }
   }
+
+  // ---- 通知とDockバッジ ----
+  const state = loadState();
+  const notifEnabled = state.settings?.notifications !== false;
+  let waitingCount = 0;
+  for (const sess of Object.keys(activity)) {
+    const info = sessions[sess];
+    const cmd = paneCommands[sess];
+    const isClaudePane = !!info && !!cmd && !SHELL_CMDS.includes(cmd);
+    const stale = !info || now - info.updatedAt > 10 * 60 * 1000;
+    const streak = workingStreak.get(sess) || 0;
+    if (working[sess]) {
+      workingStreak.set(sess, streak + 1);
+      notifiedWaiting.delete(sess);
+    } else {
+      workingStreak.set(sess, 0);
+    }
+    if (isClaudePane && !working[sess] && !stale) {
+      waitingCount++;
+      // 直前まで数tick連続で作業中だった場合のみ「応答待ちになった」とみなす（チラつき防止）
+      if (notifEnabled && streak >= 3 && !notifiedWaiting.has(sess)) {
+        notifiedWaiting.add(sess);
+        const tab = state.tabs.find((t) => t.tmuxSession === sess);
+        const watching = win && win.isFocused() && state.activeTabId === tab?.id;
+        if (tab && !watching) notifyTab(tab, '応答待ちになったよ 🐾');
+      }
+    }
+    if (notifEnabled && isClaudePane && info?.pct != null) {
+      if (info.pct >= 70 && !ctxAlerted.has(sess)) {
+        ctxAlerted.add(sess);
+        const tab = state.tabs.find((t) => t.tmuxSession === sess);
+        if (tab) notifyTab(tab, `コンテキスト ${Math.round(info.pct)}% 🔥 そろそろ /compact か引き継ぎを`);
+      } else if (info.pct < 60) {
+        ctxAlerted.delete(sess);
+      }
+    }
+  }
+  if (app.dock) app.dock.setBadge(waitingCount > 0 ? String(waitingCount) : '');
   if (win && !win.isDestroyed()) {
     win.webContents.send('claude:sessions', {
       sessions,

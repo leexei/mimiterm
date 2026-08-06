@@ -1127,6 +1127,9 @@ window.mimi.onCalendarUpdate((data) => {
   renderTodayPanel();
 });
 
+// 通知クリックからのタブジャンプ
+window.mimi.onTabActivate((tabId) => activateTab(tabId));
+
 setInterval(renderTodayPanel, 60 * 1000);
 
 // ---------- 埋め込みブラウザペイン ----------
