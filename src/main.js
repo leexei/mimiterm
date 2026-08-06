@@ -545,6 +545,7 @@ function collectClaudeSessions() {
 // ---------- 通知（アプリ→ユーザー方向） ----------
 // タブが「考え中→応答待ち」に変わった時と、コンテキストが70%を超えた時に知らせる
 const workingStreak = new Map(); // tmuxSession -> 連続で作業中だったtick数
+const lastWorkingAt = new Map(); // tmuxSession -> 最後に作業中と判定した時刻（ヒステリシス用）
 const notifiedWaiting = new Set(); // 応答待ち通知済みのセッション（再作業で解除）
 const ctxAlerted = new Set(); // コンテキスト70%通知済みのセッション（60%未満に下がると解除）
 
@@ -585,12 +586,22 @@ async function processSnapshot() {
   return { children, cpu };
 }
 
-// 子孫プロセス（常駐MCPサーバー等を含む）のCPU合計。アイドルなら0近傍、ツール実行中は上がる
+// 子孫プロセスのCPU合計。アイドルなら0近傍、ツール実行中は上がる
 function descendantsCpu(snap, pid, depth = 0) {
   if (depth > 10) return 0;
   let total = 0;
   for (const kid of snap.children.get(pid) || []) {
     total += (snap.cpu.get(kid) || 0) + descendantsCpu(snap, kid, depth + 1);
+  }
+  return total;
+}
+
+// ペイン直下のプロセス（claude本体等）自身のCPUは除き、その子（ツール・MCP）以下だけを合計する。
+// claude自身のアイドル時CPUスパイク（GC等）で稼働判定がチラつくのを防ぐ
+function toolProcessesCpu(snap, panePid) {
+  let total = 0;
+  for (const child of snap.children.get(panePid) || []) {
+    total += descendantsCpu(snap, child);
   }
   return total;
 }
@@ -685,9 +696,9 @@ setInterval(async () => {
         // transcript未作成などは無視
       }
     }
-    // 3) プロセスツリーのCPU: ツール実行中は子孫プロセスが働く（常駐MCPはアイドルで0近傍）
+    // 3) プロセスツリーのCPU: ツール実行中はclaude配下の子プロセスが働く（claude自身のCPUは見ない）
     const isShellOnly = !paneCommands[sess] || SHELL_CMDS.includes(paneCommands[sess]);
-    if (!isShellOnly && panePids[sess] && descendantsCpu(procSnap, panePids[sess]) >= 5) {
+    if (!isShellOnly && panePids[sess] && toolProcessesCpu(procSnap, panePids[sess]) >= 5) {
       working[sess] = true;
       continue;
     }
@@ -695,6 +706,12 @@ setInterval(async () => {
     if (info?.sessionId && agentActive[info.sessionId]) {
       working[sess] = true;
     }
+  }
+
+  // ヒステリシス: 一度「作業中」になったら5秒間は維持し、信号の瞬断でチラつかないようにする
+  for (const sess of Object.keys(activity)) {
+    if (working[sess]) lastWorkingAt.set(sess, now);
+    else if (now - (lastWorkingAt.get(sess) || 0) < 5000) working[sess] = true;
   }
 
   // ---- 通知とDockバッジ ----
@@ -733,7 +750,35 @@ setInterval(async () => {
       }
     }
   }
-  if (app.dock) app.dock.setBadge(waitingCount > 0 ? String(waitingCount) : '');
+  if (app.dock) {
+    app.dock.setBadge(waitingCount > 0 ? String(waitingCount) : '');
+    // Dockアイコン右クリックで応答待ちタブの一覧→選択でジャンプ
+    const waitingTabs = state.tabs.filter((t) => {
+      const info = sessions[t.tmuxSession];
+      const cmd = paneCommands[t.tmuxSession];
+      return (
+        info && cmd && !SHELL_CMDS.includes(cmd) && !working[t.tmuxSession] &&
+        now - info.updatedAt <= 10 * 60 * 1000
+      );
+    });
+    app.dock.setMenu(
+      Menu.buildFromTemplate(
+        waitingTabs.length
+          ? waitingTabs.map((t) => ({
+              label: `● ${t.name}`,
+              click: () => {
+                if (win && !win.isDestroyed()) {
+                  if (win.isMinimized()) win.restore();
+                  win.show();
+                  win.focus();
+                  win.webContents.send('tab:activate', t.id);
+                }
+              },
+            }))
+          : [{ label: '応答待ちのタブはないよ 🐾', enabled: false }]
+      )
+    );
+  }
   if (win && !win.isDestroyed()) {
     win.webContents.send('claude:sessions', {
       sessions,
