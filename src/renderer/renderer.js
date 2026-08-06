@@ -6,6 +6,7 @@ let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
 let activityMap = {}; // tmuxSession -> 最終出力アクティビティ(ms epoch)
 let workingMap = {}; // tmuxSession -> 作業中判定（main側で複数信号から算出）
 let shellProcsMap = {}; // tmuxSession -> シェル配下でバックグラウンドジョブ実行中
+const seenWaitingTabs = new Set(); // 応答待ちになってから一度開いた（既読の）タブID
 let paneCommands = {}; // tmuxSession -> 前面プロセス名（zsh / claude / node 等）
 const SPIN_FRAMES = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'];
 let spinFrame = 0;
@@ -403,6 +404,13 @@ function updateBadges() {
     if (badgeEl) applyBadge(badgeEl, tab);
     const statusEl = el.querySelector('.tab-status');
     if (statusEl) applyStatus(statusEl, tab);
+    // 応答待ちを一度見たタブは薄く（既読）。再び作業が始まると未読に戻る
+    if (workingMap[tab.tmuxSession]) seenWaitingTabs.delete(tab.id);
+    const waiting = !!claudeSessions[tab.tmuxSession] && !workingMap[tab.tmuxSession];
+    el.classList.toggle(
+      'seen',
+      waiting && seenWaitingTabs.has(tab.id) && tab.id !== state.activeTabId
+    );
   });
 }
 
@@ -599,6 +607,7 @@ async function activateTab(tabId, initialCommand) {
   const tab = state.tabs.find((t) => t.id === tabId);
   if (!tab) return;
   state.activeTabId = tabId;
+  seenWaitingTabs.add(tabId); // 開いた=既読
   save();
 
   const entry = ensureTerm(tab);

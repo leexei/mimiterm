@@ -170,6 +170,15 @@ html, body, #app {
   color: var(--fg-dim);
 }
 
+/* 応答待ちを一度確認した（既読の）タブは控えめに表示する */
+.tab.seen .tab-name {
+  color: var(--fg-dim);
+}
+
+.tab.seen .tab-status {
+  opacity: 0.55;
+}
+
 .tab-status {
   width: 13px;
   min-width: 13px;
