@@ -457,12 +457,21 @@ function refreshCalendar() {
   const calendarCommand = loadState().settings?.calendarCommand;
   if (!calendarCommand) return;
   // 直接execするとMimiTerm自身のTCC権限が必要になり、未署名アプリは再ビルドごとに権限が
-  // リセットされて破綻する。既に権限を持つtmuxサーバーのコンテキストで実行して回避する
+  // リセットされて破綻する。既に権限を持つtmuxサーバーのコンテキストで実行して回避する。
+  // 出力はtmux経由で受け取らずファイルに書かせる（tmuxサーバーのロケールが非UTF-8だと
+  // run-shellの出力の非ASCII文字が_に置換されてしまうため）
+  const outFile = path.join(STATE_DIR, 'calendar-out.txt');
   execFile(
     TMUX,
-    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${calendarCommand}`],
+    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${calendarCommand} > '${outFile}' 2>&1`],
     { timeout: 30000 },
-    (err, stdout, stderr) => {
+    (err) => {
+      let output = '';
+      try {
+        output = fs.readFileSync(outFile, 'utf8');
+      } catch {
+        // 出力ファイルなし
+      }
       // 取得失敗の切り分け用ログ（TCC権限・PATH問題など）
       fs.writeFileSync(
         path.join(STATE_DIR, 'calendar-debug.log'),
@@ -470,15 +479,14 @@ function refreshCalendar() {
           {
             at: new Date().toISOString(),
             err: err ? String(err) : null,
-            stderr: String(stderr || '').slice(0, 2000),
-            stdoutHead: String(stdout || '').slice(0, 500),
+            stdoutHead: output.slice(0, 500),
           },
           null,
           2
         )
       );
       if (err) return;
-      calendarCache = { events: parseCalendarOutput(String(stdout)), fetchedAt: Date.now() };
+      calendarCache = { events: parseCalendarOutput(output), fetchedAt: Date.now() };
       if (win && !win.isDestroyed()) win.webContents.send('calendar:update', calendarCache);
     }
   );
