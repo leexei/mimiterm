@@ -132,10 +132,9 @@ ipcMain.on('state:save', (_e, state) => saveState(state));
 
 ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand }) => {
   if (ptys.has(tabId)) return 'exists';
-  // MimiTermのタブで起動するClaude Codeは既定でこのモデルを使う
-  // （管理設定のmodelピンより ANTHROPIC_MODEL が優先されることを2026-08-05に実測確認済み。
-  //   state.jsonのsettings.claudeModelで上書き可、空文字で注入無効化）
-  const claudeModel = loadState().settings?.claudeModel ?? 'claude-fable-5';
+  // settings.claudeModel が設定されている場合のみ、タブのシェルへ ANTHROPIC_MODEL を注入する。
+  // 既定は注入なし（組織の管理設定を尊重）。有効化は各ユーザーが自分の判断で settings に書く
+  const claudeModel = loadState().settings?.claudeModel || null;
   const modelArgs = claudeModel ? ['-e', `ANTHROPIC_MODEL=${claudeModel}`] : [];
   ensureTmuxConf();
   const p = pty.spawn(TMUX, ['-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession], {
@@ -425,8 +424,8 @@ ipcMain.handle('claude:list-sessions', () => {
   return top.filter((s) => s.cwd);
 });
 
-// ---------- 今日パネル: calendar-helper.sh (icalBuddy) から今日の予定を取得 ----------
-const CALENDAR_HELPER = path.join(os.homedir(), 'scripts', 'calendar-helper.sh');
+// ---------- 今日パネル: settings.calendarCommand から今日の予定を取得 ----------
+// コマンドは「今日の予定を icalBuddy 風のテキストで出力する」任意のスクリプト。未設定ならパネル非表示
 
 function parseCalendarOutput(text) {
   const events = [];
@@ -452,12 +451,13 @@ function parseCalendarOutput(text) {
 let calendarCache = null;
 
 function refreshCalendar() {
-  if (!fs.existsSync(CALENDAR_HELPER)) return;
+  const calendarCommand = loadState().settings?.calendarCommand;
+  if (!calendarCommand) return;
   // 直接execするとMimiTerm自身のTCC権限が必要になり、未署名アプリは再ビルドごとに権限が
   // リセットされて破綻する。既に権限を持つtmuxサーバーのコンテキストで実行して回避する
   execFile(
     TMUX,
-    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH /bin/bash ${CALENDAR_HELPER} today`],
+    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${calendarCommand}`],
     { timeout: 30000 },
     (err, stdout, stderr) => {
       // 取得失敗の切り分け用ログ（TCC権限・PATH問題など）

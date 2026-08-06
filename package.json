@@ -1,6 +1,6 @@
 {
   "name": "mimiterm",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "MimiTerm — a Claude Code-native terminal with tab groups, backed by tmux",
   "main": "src/main.js",
   "scripts": {

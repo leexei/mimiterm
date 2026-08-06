@@ -1,0 +1,98 @@
+#!/bin/bash
+# MimiTerm セットアップスクリプト
+# 使い方: scripts/setup.sh <deps|build|app|statusline|mcp|all>
+# 各ステップは冪等（何度実行しても安全）。AI(Claude Code)による実行を想定している。
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_DIR"
+
+step_deps() {
+  echo "== deps: 依存ツールの確認 =="
+  command -v brew >/dev/null || { echo "NG: Homebrew が必要です https://brew.sh"; exit 1; }
+  command -v node >/dev/null || { echo "NG: Node.js が必要です (v20+)"; exit 1; }
+  command -v claude >/dev/null || { echo "NG: Claude Code が必要です"; exit 1; }
+  command -v tmux >/dev/null || { echo "tmux をインストールします"; brew install tmux; }
+  echo "OK: brew / node / claude / tmux ($(tmux -V))"
+}
+
+step_build() {
+  echo "== build: npm install + node-pty rebuild =="
+  npm install
+  # macOSのCommand Line Toolsが壊れている環境向けのフォールバック付きrebuild
+  if ! npm run rebuild; then
+    echo "rebuild失敗。CLTのlibc++ヘッダ破損の可能性があるためSDK直指定で再試行します"
+    export SDKROOT="$(xcrun --show-sdk-path)"
+    export CXXFLAGS="-nostdinc++ -isystem $SDKROOT/usr/include/c++/v1"
+    npm run rebuild
+  fi
+  echo "OK: build完了"
+}
+
+step_app() {
+  echo "== app: パッケージして /Applications へ配置 =="
+  npm run deploy
+  echo "OK: /Applications/MimiTerm.app を更新しました"
+  echo "初回起動でGatekeeperに止められた場合: 右クリック→開く、または"
+  echo "  xattr -dr com.apple.quarantine /Applications/MimiTerm.app"
+}
+
+step_statusline() {
+  echo "== statusline: Claude Code の statusLine を MimiTerm tap に設定 =="
+  python3 - "$REPO_DIR" <<'EOF'
+import json, os, shutil, sys
+repo = sys.argv[1]
+p = os.path.expanduser('~/.claude/settings.json')
+d = {}
+if os.path.exists(p):
+    shutil.copy(p, p + '.mimiterm-backup')
+    d = json.load(open(p))
+cur = d.get('statusLine', {}).get('command', '')
+tap = f'bash {repo}/scripts/statusline-tap.sh'
+if 'statusline-tap.sh' in cur:
+    print('OK: 既にtapが設定済み')
+else:
+    if cur:
+        # 既存のstatuslineはチェーン先として退避し、表示を維持する
+        chain = os.path.expanduser('~/.mimiterm/statusline-chain.sh')
+        os.makedirs(os.path.dirname(chain), exist_ok=True)
+        with open(chain, 'w') as f:
+            f.write(f'#!/bin/bash\nexec {cur}\n')
+        print(f'既存statusline({cur})をチェーン先として退避: {chain}')
+    d['statusLine'] = {'type': 'command', 'command': tap, 'padding': d.get('statusLine', {}).get('padding', 2)}
+    json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
+    print('OK: statusLineをtapに設定（バックアップ: settings.json.mimiterm-backup）')
+EOF
+}
+
+step_mcp() {
+  echo "== mcp: MimiTerm MCPサーバーを user scope で登録 =="
+  CFG="$HOME/.mimiterm/mcp.json"
+  if [ ! -f "$CFG" ]; then
+    echo "NG: $CFG がありません。先にMimiTerm.appを一度起動してください"
+    exit 1
+  fi
+  TOKEN=$(python3 -c "import json;print(json.load(open('$CFG'))['token'])")
+  PORT=$(python3 -c "import json;print(json.load(open('$CFG'))['port'])")
+  claude mcp remove --scope user mimiterm >/dev/null 2>&1 || true
+  claude mcp add --scope user --transport http mimiterm "http://127.0.0.1:${PORT}/mcp" \
+    --header "Authorization: Bearer ${TOKEN}"
+  echo "OK: MCP登録完了（新しいClaude Codeセッションから利用可能）"
+}
+
+case "${1:-all}" in
+  deps) step_deps ;;
+  build) step_build ;;
+  app) step_app ;;
+  statusline) step_statusline ;;
+  mcp) step_mcp ;;
+  all)
+    step_deps
+    step_build
+    step_app
+    step_statusline
+    echo
+    echo "次: MimiTerm.app を起動してから 'scripts/setup.sh mcp' を実行してください"
+    ;;
+  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|all>"; exit 1 ;;
+esac

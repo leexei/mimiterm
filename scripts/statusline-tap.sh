@@ -1,7 +1,12 @@
 #!/bin/bash
 # MimiTerm statusline tap:
-# Claude Code の statusline JSON を tmux セッション名キーで保存してから、
-# 既存の statusline スクリプトへそのまま流す（表示は従来どおり）。
+# Claude Code の statusline JSON を tmux セッション名キーで保存し、MimiTerm のタブに
+# コンテキスト%等を表示できるようにする。その後、既存の statusline があればそこへ流す。
+#
+# チェーン先の優先順位:
+#   1. ~/.mimiterm/statusline-chain.sh （明示指定用）
+#   2. ~/.claude/statusline.sh          （一般的な配置場所）
+#   3. 内蔵の最小表示（モデル名 + コンテキスト%）
 input=$(cat)
 
 if [ -n "$TMUX" ]; then
@@ -16,4 +21,12 @@ if [ -n "$TMUX" ]; then
   esac
 fi
 
-printf '%s' "$input" | bash "$HOME/.claude/statusline.sh"
+if [ -f "$HOME/.mimiterm/statusline-chain.sh" ]; then
+  printf '%s' "$input" | bash "$HOME/.mimiterm/statusline-chain.sh"
+elif [ -f "$HOME/.claude/statusline.sh" ]; then
+  printf '%s' "$input" | bash "$HOME/.claude/statusline.sh"
+else
+  pct=$(printf '%s' "$input" | sed -n 's/.*"used_percentage":\([0-9]*\).*/\1/p' | head -1)
+  model=$(printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -1)
+  printf '%s | ctx %s%%\n' "${model:-Claude}" "${pct:-0}"
+fi

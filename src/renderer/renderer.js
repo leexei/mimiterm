@@ -843,8 +843,11 @@ async function openImportModal() {
 }
 
 async function importSession(s) {
-  // 過去に作業していたディレクトリなので trust ダイアログを事前承認しておく
-  await window.mimi.trustDir(s.cwd);
+  // settings.autoTrustImports が有効な場合のみ、trust ダイアログを事前承認する
+  // （過去に自分が作業していたディレクトリに限られるため安全だが、明示opt-in制）
+  if (state.settings?.autoTrustImports === true) {
+    await window.mimi.trustDir(s.cwd);
+  }
   const tab = {
     id: uid('t'),
     name: s.title.slice(0, 24),
