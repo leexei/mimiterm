@@ -546,6 +546,7 @@ function collectClaudeSessions() {
 // タブが「考え中→応答待ち」に変わった時と、コンテキストが70%を超えた時に知らせる
 const workingStreak = new Map(); // tmuxSession -> 連続で作業中だったtick数
 const lastWorkingAt = new Map(); // tmuxSession -> 最後に作業中と判定した時刻（ヒステリシス用）
+const activityStreak = new Map(); // tmuxSession -> 出力信号が連続で新鮮だったtick数
 const notifiedWaiting = new Set(); // 応答待ち通知済みのセッション（再作業で解除）
 const ctxAlerted = new Set(); // コンテキスト70%通知済みのセッション（60%未満に下がると解除）
 
@@ -680,7 +681,11 @@ setInterval(async () => {
   }
   for (const sess of Object.keys(activity)) {
     // 1) 出力が直近流れている（ストリーミング・スピナー描画中）
-    if (now - activity[sess] < 4000) {
+    // ただしタブ切替・リサイズ時のtmux再描画も「出力」に見えるため、3tick(約4.5秒)継続した時のみ採用する
+    // （本物のターン開始はユーザー入力が即transcriptに書かれ信号②が先に発火するので、体感は遅れない）
+    const activityFresh = now - activity[sess] < 4000;
+    activityStreak.set(sess, activityFresh ? (activityStreak.get(sess) || 0) + 1 : 0);
+    if (activityFresh && activityStreak.get(sess) >= 3) {
       working[sess] = true;
       continue;
     }
