@@ -411,12 +411,25 @@ function readBody(req, limit = 1024 * 1024) {
   });
 }
 
+function authorized(req, cfg) {
+  const provided = Buffer.from(String(req.headers['authorization'] || ''));
+  const expected = Buffer.from(`Bearer ${cfg.token}`);
+  if (provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(provided, expected);
+}
+
 async function handleRequest(req, res, cfg, ctx) {
   if (req.url.split('?')[0] !== '/mcp') {
     res.writeHead(404).end();
     return;
   }
-  if ((req.headers['authorization'] || '') !== `Bearer ${cfg.token}`) {
+  // DNSリバインディング対策: ブラウザ由来（Originあり）のクロスオリジン要求は拒否する
+  const origin = req.headers.origin;
+  if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    res.writeHead(403).end();
+    return;
+  }
+  if (!authorized(req, cfg)) {
     res.writeHead(401, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Unauthorized' } }));
     return;

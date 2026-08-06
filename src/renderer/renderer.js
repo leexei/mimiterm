@@ -858,7 +858,8 @@ async function importSession(s) {
   state.tabs.push(tab);
   save();
   render();
-  activateTab(tab.id, `cd '${s.cwd}' && claude --resume ${s.sessionId}`);
+  const safeCwd = s.cwd.replace(/'/g, `'\\''`); // シングルクォート入りパスでも壊れないように
+  activateTab(tab.id, `cd '${safeCwd}' && claude --resume ${s.sessionId}`);
 }
 
 document.getElementById('import-session').addEventListener('click', openImportModal);

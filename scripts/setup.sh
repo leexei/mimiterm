@@ -45,23 +45,31 @@ repo = sys.argv[1]
 p = os.path.expanduser('~/.claude/settings.json')
 d = {}
 if os.path.exists(p):
-    shutil.copy(p, p + '.mimiterm-backup')
     d = json.load(open(p))
 cur = d.get('statusLine', {}).get('command', '')
 tap = f'bash {repo}/scripts/statusline-tap.sh'
 if 'statusline-tap.sh' in cur:
-    print('OK: 既にtapが設定済み')
+    print('OK: 既にtapが設定済み（変更なし）')
 else:
+    # バックアップは初回のみ作成する（再実行でtap設定後の内容に上書きしない）
+    backup = p + '.mimiterm-backup'
+    if os.path.exists(p) and not os.path.exists(backup):
+        shutil.copy(p, backup)
+        print(f'バックアップ作成: {backup}')
     if cur:
         # 既存のstatuslineはチェーン先として退避し、表示を維持する
         chain = os.path.expanduser('~/.mimiterm/statusline-chain.sh')
         os.makedirs(os.path.dirname(chain), exist_ok=True)
-        with open(chain, 'w') as f:
-            f.write(f'#!/bin/bash\nexec {cur}\n')
-        print(f'既存statusline({cur})をチェーン先として退避: {chain}')
+        if not os.path.exists(chain):
+            with open(chain, 'w') as f:
+                f.write(f'#!/bin/bash\nexec {cur}\n')
+            print(f'既存statusline({cur})をチェーン先として退避: {chain}')
     d['statusLine'] = {'type': 'command', 'command': tap, 'padding': d.get('statusLine', {}).get('padding', 2)}
-    json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
-    print('OK: statusLineをtapに設定（バックアップ: settings.json.mimiterm-backup）')
+    tmp = p + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    print('OK: statusLineをtapに設定')
 EOF
 }
 

@@ -352,7 +352,10 @@ ipcMain.handle('claude:trust-dir', (_e, dir) => {
     config.projects[dir] = config.projects[dir] || {};
     if (config.projects[dir].hasTrustDialogAccepted === true) return 'already';
     config.projects[dir].hasTrustDialogAccepted = true;
-    fs.writeFileSync(claudeJson, JSON.stringify(config, null, 2));
+    // Claude Code全体の設定ファイルなので、途中クラッシュで壊さないようアトミックに書く
+    const tmp = `${claudeJson}.mimiterm-tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2));
+    fs.renameSync(tmp, claudeJson);
     return 'trusted';
   } catch (e) {
     return `error: ${e.message}`;
