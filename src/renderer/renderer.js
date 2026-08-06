@@ -1225,7 +1225,7 @@ browserDivider.addEventListener('mousedown', (e) => {
   document.addEventListener('mouseup', onUp);
 });
 
-// ---- ブックマーク（ミミもMCPのbookmark_*ツールで管理できる） ----
+// ---- ブックマーク（ClaudeもMCPのbookmark_*ツールで管理できる） ----
 
 const bookmarksBar = document.getElementById('bw-bookmarks');
 
@@ -1265,7 +1265,7 @@ document.getElementById('bw-star').addEventListener('click', () => {
   saveBookmarks([...bookmarks(), { label, url }]);
 });
 
-// ミミ（MCPのbrowser_navigate）からの要求でペインを開く
+// Claude（MCPのbrowser_navigate）からの要求でペインを開く
 window.mimi.onBrowserOpen((url) => openBrowserPane(url));
 
 // ---------- init ----------
