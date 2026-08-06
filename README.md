@@ -1,6 +1,6 @@
 # MimiTerm 🐈‍⬛
 
-Claude Code ネイティブなターミナル。タブを日付グループで整理し、各タブのClaudeの状態（考え中/応答待ち/コンテキスト%）を可視化する。内蔵MCPサーバー経由で、Claude自身がタブ整理・スケジュール管理・ブラウザペインの操作を行える（**ターミナルへコマンドを投入するMCPツールは持たない**。後述のセキュリティ節を参照）。セッションの実体はtmuxが保持するため、アプリを再起動しても消えない。
+Claude Code ネイティブなターミナル。タブを日付グループで整理し、各タブのClaudeの状態（考え中/応答待ち/コンテキスト%）を可視化する。内蔵MCPサーバー経由で、Claude自身がタブ整理・スケジュール・外観・ブラウザペインの操作を行える（**ターミナルへコマンドを投入するMCPツールは持たない**。後述のセキュリティ節を参照）。セッションの実体はtmuxが保持するため、アプリを再起動しても消えない。
 
 > **このREADMEはAI（Claude Code）に読ませてセットアップさせる前提で書かれています。**
 > 手元のClaude Codeに「このリポジトリのREADMEに従ってMimiTermをセットアップして」と依頼してください。
@@ -11,7 +11,7 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **tmuxバックエンド**: 1タブ=1 tmuxセッション。アプリ終了はdetachのみで、プロセスは生き続ける
 - **Claude状態の可視化**: タブ毎に ✳考え中（4信号検出） / 📋plan停止 / ●応答待ち / ⚙他プロセス実行中、コンテキスト%バッジ、⏳再開予定日
 - **アカウント状態**: サイドバー下部に5h/7日レート制限バー（リセットまでの残り時間つき）
-- **今日パネル**: 今日の予定と空き時間、期日が来たタブを表示。`calendarCommand` を設定した時、または期日（`schedule_tab`）が来たタブがある時に表示される。空き時間は 09:00〜18:00 の窓（現在時刻以降）を基準に算出（現状は固定値）
+- **今日パネル**: 今日の予定と空き時間、期日が来たタブを表示。`calendarCommand` の取得に成功した時、または期日（`schedule_tab`）が来たタブがある時に表示される。空き時間は 09:00〜18:00 の窓（現在時刻以降）を基準に算出（現状は固定値）
 - **クイックコマンドバー**: ワンクリックでコマンド注入。Claude実行中/シェルでセット自動切替
 - **セッションインポート**: 過去のClaude Codeセッションを選んで `claude --resume` 付きタブを生成
 - **埋め込みブラウザ**: SSOセッション永続のブラウザペイン。選択テキストをClaude入力欄へ引用注入
@@ -32,7 +32,7 @@ open /Applications/MimiTerm.app
 scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トークンが生成されてから）
 ```
 
-**クローンしたディレクトリはセットアップ後もそのまま残してください。** statusline設定がこのディレクトリ内のスクリプトを絶対パスで参照します（移動・削除するとstatuslineが壊れます）。
+**クローンしたディレクトリはセットアップ後もそのまま残してください。** statusline設定がこのディレクトリ内のスクリプトを絶対パスで参照します（移動・削除するとstatuslineが壊れます）。移動した場合は `~/.claude/settings.json` の `statusLine.command` のパスを手で新しい場所に直してください。
 
 各ステップの内容（個別実行可: `deps` / `build` / `app` / `statusline` / `mcp`）:
 
@@ -56,7 +56,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | キー | 型 | 既定 | 説明 |
 |-----|-----|------|------|
 | `claudeModel` | string | 未設定（注入なし） | 設定時、タブのシェルに `ANTHROPIC_MODEL=<値>` を注入。**組織のモデルポリシーがある場合は自組織のルールを確認の上、自己判断で設定すること** |
-| `calendarCommand` | string | 未設定（カレンダー取得なし） | 「今日の予定」を後述フォーマットで出力するコマンド。例: `icalBuddy -ic "カレンダー名" -df "%Y-%m-%d" -tf "%H:%M" eventsToday` |
+| `calendarCommand` | string | 未設定（カレンダー取得なし） | 「今日の予定」を後述フォーマットで出力するコマンド。例（実機検証済み）: `icalBuddy -ic "カレンダー名" -nc -nrd -iep "title,datetime" -po "datetime,title" -df "%Y-%m-%d" -tf "%H:%M" eventsToday` |
 | `autoTrustImports` | bool | false | セッションインポート時にそのディレクトリのClaude trustダイアログを事前承認する。**有効時は `~/.claude.json` を書き換える** |
 | `background` / `backgroundOpacity` | string / number | 未設定 / 0.25 | ターミナル背景画像とその見え具合。MCPの `set_background` で設定される |
 | `quickCommandsByMode` | object | 未設定（組込みセットを使用） | クイックコマンド（UI上で編集可能なので直接編集は不要） |
@@ -64,7 +64,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 
 ### カレンダー出力の必須フォーマット
 
-`calendarCommand` の出力は以下の形式に従う必要があります（[icalBuddy](https://hasseg.org/icalBuddy/) の出力形式）:
+`calendarCommand` の出力は以下の形式に従う必要があります（[icalBuddy](https://hasseg.org/icalBuddy/) に `-po "datetime,title"` を指定した時の出力形式。**icalBuddyの既定はタイトルが先に出るため、`-po` 指定が必須**）:
 
 ```
 • 09:00 - 10:00
@@ -119,6 +119,6 @@ claude mcp remove --scope user mimiterm
 rm -rf /Applications/MimiTerm.app ~/.mimiterm
 # 4. MimiTermのtmuxセッションを終了（mimi-* のみを対象にする。
 #    tmux kill-server はMimiTerm以外のtmuxセッションも全て終了させるため使わないこと）
-tmux ls -F '#{session_name}' | grep '^mimi-' | xargs -n1 tmux kill-session -t
+tmux ls -F '#{session_name}' | grep '^mimi-' | while read -r s; do tmux kill-session -t "$s"; done
 # 5. クローンしたリポジトリを削除
 ```

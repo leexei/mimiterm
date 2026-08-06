@@ -1,7 +1,9 @@
 #!/bin/bash
 # MimiTerm セットアップスクリプト
 # 使い方: scripts/setup.sh <deps|build|app|statusline|mcp|all>
-# 各ステップは冪等（何度実行しても安全）。AI(Claude Code)による実行を想定している。
+# 再実行しても既存設定を破壊しない（app は MimiTerm.app を終了してから実行すること）。
+# AI(Claude Code)による実行を想定している。
+# リポジトリを移動した場合: ~/.claude/settings.json の statusLine.command のパスを手で直すこと。
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
