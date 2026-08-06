@@ -1127,6 +1127,61 @@ function renderTodayPanel() {
   panel.innerHTML = html;
 }
 
+// 今日パネルのホバーで全予定リストをポップオーバー表示する
+let calPreviewEl = null;
+
+function hideCalendarPreview() {
+  if (calPreviewEl) {
+    calPreviewEl.remove();
+    calPreviewEl = null;
+  }
+}
+
+function showCalendarPreview() {
+  hideCalendarPreview();
+  if (!calendar || calendar.events.length === 0) return;
+  const now = nowHHMM();
+  calPreviewEl = document.createElement('div');
+  calPreviewEl.id = 'calendar-preview';
+  const header = document.createElement('div');
+  header.className = 'preview-header';
+  header.textContent = `📅 今日の予定 全${calendar.events.length}件`;
+  const body = document.createElement('div');
+  body.className = 'preview-body cal-list';
+  for (const e of calendar.events) {
+    const row = document.createElement('div');
+    if (e.allDay) {
+      row.className = 'cal-row allday';
+      row.textContent = `◇ 終日 ${e.title}`;
+    } else {
+      const past = e.end <= now;
+      const ongoing = !past && e.start <= now;
+      row.className = 'cal-row' + (past ? ' past' : ongoing ? ' ongoing' : '');
+      row.textContent = `${ongoing ? '▶ ' : ''}${e.start}-${e.end} ${e.title}`;
+    }
+    body.appendChild(row);
+  }
+  calPreviewEl.appendChild(header);
+  calPreviewEl.appendChild(body);
+  document.body.appendChild(calPreviewEl);
+  const rect = document.getElementById('today-panel').getBoundingClientRect();
+  const top = Math.min(rect.top, window.innerHeight - calPreviewEl.offsetHeight - 12);
+  calPreviewEl.style.left = `${rect.right + 8}px`;
+  calPreviewEl.style.top = `${Math.max(8, top)}px`;
+}
+
+{
+  const panel = document.getElementById('today-panel');
+  let timer = null;
+  panel.addEventListener('mouseenter', () => {
+    timer = setTimeout(showCalendarPreview, 350);
+  });
+  panel.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    hideCalendarPreview();
+  });
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }

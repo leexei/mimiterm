@@ -410,7 +410,8 @@ html, body, #app {
   color: #f38ba8;
 }
 
-#tab-preview {
+#tab-preview,
+#calendar-preview {
   position: fixed;
   z-index: 200;
   width: 520px;
@@ -444,6 +445,35 @@ html, body, #app {
   white-space: pre-wrap;
   word-break: break-all;
   overflow: hidden;
+}
+
+#calendar-preview {
+  width: 420px;
+}
+
+.cal-list {
+  font-family: Menlo, "Hiragino Sans", monospace;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.cal-row {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-row.past {
+  opacity: 0.4;
+}
+
+.cal-row.ongoing {
+  color: #a6e3a1;
+  font-weight: 600;
+}
+
+.cal-row.allday {
+  color: var(--fg-dim);
 }
 
 #modal-overlay {
