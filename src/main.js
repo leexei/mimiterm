@@ -555,6 +555,7 @@ function collectClaudeSessions() {
 const workingStreak = new Map(); // tmuxSession -> 連続で作業中だったtick数
 const lastWorkingAt = new Map(); // tmuxSession -> 最後に作業中と判定した時刻（ヒステリシス用）
 const activityStreak = new Map(); // tmuxSession -> 出力信号が連続で新鮮だったtick数
+const cpuStreak = new Map(); // tmuxSession -> CPU信号が連続で高かったtick数
 const notifiedWaiting = new Set(); // 応答待ち通知済みのセッション（再作業で解除）
 const ctxAlerted = new Set(); // コンテキスト70%通知済みのセッション（60%未満に下がると解除）
 
@@ -710,8 +711,13 @@ setInterval(async () => {
       }
     }
     // 3) プロセスツリーのCPU: ツール実行中はclaude配下の子プロセスが働く（claude自身のCPUは見ない）
+    // 瞬間的なシステム全体のCPUスパイクで全タブが一斉に✳化しないよう、3tick(約4.5秒)継続を要求する
+    // （実際のツール実行はスパイクより圧倒的に長く、開始の即応は信号②が担う）
     const isShellOnly = !paneCommands[sess] || SHELL_CMDS.includes(paneCommands[sess]);
-    if (!isShellOnly && panePids[sess] && toolProcessesCpu(procSnap, panePids[sess]) >= 5) {
+    const cpuHigh =
+      !isShellOnly && panePids[sess] && toolProcessesCpu(procSnap, panePids[sess]) >= 5;
+    cpuStreak.set(sess, cpuHigh ? (cpuStreak.get(sess) || 0) + 1 : 0);
+    if (cpuHigh && cpuStreak.get(sess) >= 3) {
       working[sess] = true;
       continue;
     }
