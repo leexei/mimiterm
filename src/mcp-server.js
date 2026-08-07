@@ -81,6 +81,54 @@ const TOOLS = [
     },
   },
   {
+    name: 'create_tab',
+    description:
+      '新しいタブを作成する。command を渡すとそのタブのシェルで実行される（例: 引き継ぎ用の claude 起動）。' +
+      'group 省略時は現在アクティブなタブと同じグループ、cwd 省略時はホームディレクトリ。' +
+      'コンテキスト逼迫時のハンドオフ（スナップショットを書いた上で新セッションを立てる）に使う。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'タブ名' },
+        group: { type: 'string', description: '作成先グループ（グループID or 名前。無ければ作成）' },
+        command: { type: 'string', description: 'タブ起動時に実行するコマンド' },
+        cwd: { type: 'string', description: 'コマンドを実行するディレクトリ' },
+        activate: { type: 'boolean', description: '作成後にそのタブへ切り替えるか（既定 true）' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) =>
+      ctx.mutateState((state) => {
+        let group = args.group ? resolveGroup(state, args.group) : null;
+        if (args.group && !group) {
+          group = { id: uid('g'), name: args.group, collapsed: false };
+          state.groups.push(group);
+        }
+        if (!group) {
+          const active = state.tabs.find((t) => t.id === state.activeTabId);
+          group = state.groups.find((g) => g.id === active?.groupId) || state.groups[0];
+        }
+        if (!group) {
+          group = { id: uid('g'), name: '作業場', collapsed: false };
+          state.groups.push(group);
+        }
+        const tab = {
+          id: uid('t'),
+          name: args.name,
+          groupId: group.id,
+          tmuxSession: uid('mimi'),
+          // レンダラーがこれを見てtmuxセッションを起動し、コマンドを流し込む
+          pendingCommand: args.command || '',
+          pendingCwd: args.cwd || '',
+          pendingActivate: args.activate !== false,
+        };
+        state.tabs.push(tab);
+        group.collapsed = false;
+        return { ok: true, tab: { id: tab.id, name: tab.name, group: group.name } };
+      }),
+  },
+  {
     name: 'rename_tab',
     description: 'タブの名前を変更する。',
     inputSchema: {

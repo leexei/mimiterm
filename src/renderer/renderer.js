@@ -639,6 +639,7 @@ async function activateTab(tabId, initialCommand) {
   updateSidebarActive();
   updateWindowTitle();
   renderQuickbar();
+  renderStatusBar();
 }
 
 // ---- 同期出力(DECSET 2026)の自前実装 ----
@@ -718,7 +719,38 @@ window.mimi.onStateReload((newState) => {
   renderQuickbar();
   renderBookmarks();
   render();
+  consumePendingTabs();
 });
+
+// MCPのcreate_tabで作られたタブは、レンダラー側でtmuxセッションを起動して初期コマンドを流す
+async function consumePendingTabs() {
+  for (const tab of state.tabs) {
+    if (tab.pendingCommand === undefined || terms.has(tab.id)) continue;
+    const cmd = tab.pendingCommand;
+    const cwd = tab.pendingCwd;
+    const focus = tab.pendingActivate !== false;
+    delete tab.pendingCommand;
+    delete tab.pendingCwd;
+    delete tab.pendingActivate;
+    save();
+    const safeCwd = cwd ? cwd.replace(/'/g, `'\\''`) : '';
+    const initial = cmd && safeCwd ? `cd '${safeCwd}' && ${cmd}` : cmd || (safeCwd ? `cd '${safeCwd}'` : '');
+    if (focus) {
+      await activateTab(tab.id, initial);
+    } else {
+      const entry = ensureTerm(tab);
+      entry.attached = true;
+      await window.mimi.ptyCreate({
+        tabId: tab.id,
+        tmuxSession: tab.tmuxSession,
+        cols: entry.term.cols,
+        rows: entry.term.rows,
+        initialCommand: initial,
+      });
+    }
+    render();
+  }
+}
 
 // Claude 全体の利用制限（5時間 / 7日ウィンドウ）をサイドバー下部に表示
 function renderRateLimits(rl) {
@@ -782,6 +814,7 @@ window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working,
   }
   if (changed) save();
   updateBadges();
+  renderStatusBar();
 });
 
 function fitActive() {
@@ -1077,6 +1110,43 @@ function openQuickAddModal() {
   document.body.appendChild(overlay);
   cmdInput.focus();
 }
+
+// ---------- ステータスバー（アクティブタブのコンテキスト量 + ハンドオフ） ----------
+
+const HANDOFF_PROMPT =
+  'コンテキストが逼迫してきたのでハンドオフしよう。' +
+  'まず ~/Knowledge/sessions/ にスナップショット（今のタスク・進捗・残作業・合意事項・参照中のファイルやブランチ）を書き込んで、' +
+  '書き込みが完了したら mimiterm の create_tab で新しいタブを作って、' +
+  'そのスナップショットを読むところから再開できる状態にして。このタブは最後に閉じる案内だけしてね。';
+
+function renderStatusBar() {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId);
+  const info = tab ? claudeSessions[tab.tmuxSession] : null;
+  const pct = info?.pct != null ? Math.round(info.pct) : null;
+  document.getElementById('sb-tab').textContent = tab ? tab.name : '';
+  const ctxEl = document.getElementById('sb-ctx');
+  const btn = document.getElementById('sb-handoff');
+  if (pct == null) {
+    ctxEl.textContent = '';
+    ctxEl.className = '';
+    btn.classList.remove('urgent');
+    return;
+  }
+  const level = pct >= 70 ? 'high' : pct >= 50 ? 'mid' : 'low';
+  ctxEl.textContent = `ctx ${pct}%`;
+  ctxEl.className = level;
+  // 70%以上＝引き継ぎ推奨。ボタンを目立たせる
+  btn.classList.toggle('urgent', pct >= 70);
+}
+
+document.getElementById('sb-handoff').addEventListener('click', () => {
+  const entry = terms.get(state.activeTabId);
+  if (!entry || !entry.attached) return;
+  // 貼り付け扱いで入れてから改行を送る（プロンプト内の改行で誤送信しないように）
+  window.mimi.ptyInput(state.activeTabId, `\x1b[200~${HANDOFF_PROMPT}\x1b[201~`);
+  setTimeout(() => window.mimi.ptyInput(state.activeTabId, '\r'), 120);
+  entry.term.focus();
+});
 
 // ---------- 今日パネル（カレンダー × 期日タブ） ----------
 
