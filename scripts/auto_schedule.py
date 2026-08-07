@@ -136,8 +136,11 @@ def call(name, args):
 HOME_GROUP = '作業場'
 
 
-def current_group_name():
-    """このタブが今いるグループ名。取得できなければ None。"""
+PENDING_BADGE = '🤔'  # 「別日にやる話は出たが日付未定」の印
+
+
+def current_tab():
+    """このタブの現在の状態。取得できなければ None。"""
     try:
         res = call('list_tabs', {})
         data = json.loads(res['result']['content'][0]['text'])
@@ -145,7 +148,7 @@ def current_group_name():
         return None
     for t in data.get('tabs', []):
         if sess in (t.get('tmuxSession'), t.get('id'), t.get('name')):
-            return t.get('group')
+            return t
     return None
 
 
@@ -159,16 +162,20 @@ for line in reversed(scope_lines):
             d = cand
             break
 
+tab = current_tab()
+
 if d:
     iso = d.isoformat()
     call('schedule_tab', {'tab': sess, 'date': iso})
     call('move_tab_to_group', {'tab': sess, 'group': f'📅 {iso}'})
+    # 🤔（日付未定の印）の解除は schedule_tab 側で行われる
 elif re.search(r'(後日|別日|保留|ペンディング|持ち越|あとで|次回)', tail):
     # 日付が確定できない延期表現 → 人が判断できるよう印だけ付ける。
     # 日付グループに残っていると予定が確定しているように見えるので作業場へ戻す
     # （問い合わせ・レビュー待ちなど用途別グループはそのまま維持する）
-    call('set_tab_badge', {'tab': sess, 'badge': '🤔'})
-    group = current_group_name()
+    if not (tab and tab.get('badge')):
+        call('set_tab_badge', {'tab': sess, 'badge': PENDING_BADGE})
+    group = tab.get('group') if tab else None
     if group and group.startswith('📅'):
         call('schedule_tab', {'tab': sess, 'date': ''})
         call('move_tab_to_group', {'tab': sess, 'group': HOME_GROUP})

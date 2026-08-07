@@ -206,6 +206,8 @@ const TOOLS = [
           throw new Error(`日付は YYYY-MM-DD 形式で指定してください: ${args.date}`);
         }
         tab.scheduledFor = args.date || null;
+        // 「日付未定」を意味する 🤔 は、予定が確定したら不要になるので外す
+        if (args.date && tab.badgeEmoji === '🤔') tab.badgeEmoji = null;
         return { ok: true, tab: tab.name, scheduledFor: tab.scheduledFor };
       }),
   },
