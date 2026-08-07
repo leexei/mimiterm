@@ -12,6 +12,7 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **Claude状態の可視化**: タブ毎に ✳考え中（4信号検出） / 📋plan停止 / ●応答待ち / ⚙他プロセス実行中、コンテキスト%バッジ、⏳再開予定日
 - **アカウント状態**: サイドバー下部に5h/7日レート制限バー（リセットまでの残り時間つき）
 - **通知**: タブが「考え中→応答待ち」に変わった時と、コンテキスト使用率が70%を超えた時にmacOS通知（クリックでそのタブへジャンプ）。Dockアイコンに応答待ちタブ数のバッジを表示。フォーカス中のタブの応答待ち通知は抑制される
+- **タブの自動整理**（任意・`setup.sh autoschedule` で有効化）: Claude Code の Stop hook で応答文から「別日にやる」意図を検出し、日付が読み取れれば再開予定日を設定してその日付グループへ自動移動、曖昧なら 🤔 バッジのみ付与。判定は正規表現のみで追加のAI呼び出しは行わない
 - **今日パネル**: 今日の予定と空き時間、再開予定日が来たタブを表示。`calendarCommand` の実行結果を取得できた時、または再開予定日（`schedule_tab`）が来たタブがある時に表示される。空き時間は 09:00〜18:00 の窓（現在時刻以降）を基準に算出（現状は固定値）
 - **クイックコマンドバー**: ワンクリックでコマンド注入。Claude実行中/シェルでセット自動切替
 - **セッションインポート**: 過去のClaude Codeセッションを選んで `claude --resume` 付きタブを生成
@@ -44,6 +45,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | app | パッケージして `/Applications/MimiTerm.app` へ | 既存MimiTerm.appを上書き（**実行中の場合は先に終了すること**） |
 | statusline | `~/.claude/settings.json` のstatusLineをtapに変更 | 変更内容: (1) 初回のみ `settings.json.mimiterm-backup` を作成 (2) 既存statuslineがあればチェーン先（`~/.mimiterm/statusline-chain.sh`）に退避して表示を維持 (3) statusLine.commandをtapに書き換え |
 | mcp | `claude mcp add --scope user` でMimiTerm MCPを登録 | user scopeのMCP設定に `mimiterm` が追加される |
+| autoschedule（任意） | `~/.claude/settings.json` の `hooks.Stop` にタブ自動整理フックを追加 | 応答完了時にMimiTermのタブが自動で日付グループへ移動する。`all` には含まれないので必要な人だけ実行 |
 
 セットアップ後、AIはユーザーに以下を伝えること:
 - Gatekeeperに「開発元を確認できない」と言われたら: 右クリック→開く、または `xattr -dr com.apple.quarantine /Applications/MimiTerm.app`

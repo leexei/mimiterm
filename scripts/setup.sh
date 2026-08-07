@@ -90,8 +90,34 @@ step_mcp() {
   echo "OK: MCP登録完了（新しいClaude Codeセッションから利用可能）"
 }
 
+step_autoschedule() {
+  echo "== autoschedule: 応答から予定日を検出してタブを自動整理するhookを登録 =="
+  python3 - "$REPO_DIR" <<'EOF'
+import json, os, shutil, sys
+repo = sys.argv[1]
+p = os.path.expanduser('~/.claude/settings.json')
+d = json.load(open(p)) if os.path.exists(p) else {}
+cmd = f'bash {repo}/scripts/auto-schedule-hook.sh'
+hooks = d.setdefault('hooks', {})
+stop = hooks.setdefault('Stop', [])
+if any(cmd in h.get('command', '') for entry in stop for h in entry.get('hooks', [])):
+    print('OK: 既に登録済み')
+else:
+    backup = p + '.mimiterm-backup'
+    if os.path.exists(p) and not os.path.exists(backup):
+        shutil.copy(p, backup)
+    stop.append({'hooks': [{'type': 'command', 'command': cmd, 'timeout': 10}]})
+    tmp = p + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    print('OK: Stop hookに登録しました（新しいセッションから有効）')
+EOF
+}
+
 case "${1:-all}" in
   deps) step_deps ;;
+  autoschedule) step_autoschedule ;;
   build) step_build ;;
   app) step_app ;;
   statusline) step_statusline ;;
@@ -104,5 +130,5 @@ case "${1:-all}" in
     echo
     echo "次: MimiTerm.app を起動してから 'scripts/setup.sh mcp' を実行してください"
     ;;
-  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|all>"; exit 1 ;;
+  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|autoschedule|all>"; exit 1 ;;
 esac
