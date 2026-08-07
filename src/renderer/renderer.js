@@ -89,7 +89,7 @@ function renderGroup(group) {
   const tabsEl = document.createElement('div');
   tabsEl.className = 'tabs';
   for (const tab of state.tabs.filter((t) => t.groupId === group.id)) {
-    tabsEl.appendChild(renderTab(tab));
+    tabsEl.appendChild(renderTab(tab, group));
   }
   groupEl.appendChild(tabsEl);
 
@@ -140,7 +140,7 @@ function moveGroupRelative(draggedId, targetGroup, before) {
   render();
 }
 
-function renderTab(tab) {
+function renderTab(tab, group) {
   const entry = terms.get(tab.id);
   const tabEl = document.createElement('div');
   tabEl.className =
@@ -169,11 +169,21 @@ function renderTab(tab) {
 
   if (tab.scheduledFor) {
     const due = tab.scheduledFor <= localToday();
-    const chip = document.createElement('span');
-    chip.className = 'schedule-chip' + (due ? ' due' : '');
-    chip.textContent = `${due ? '⏰' : '⏳'}${tab.scheduledFor.slice(5).replace('-', '/')}`;
-    chip.title = due ? `再開予定日が来ています: ${tab.scheduledFor}` : `再開予定: ${tab.scheduledFor}`;
-    tabEl.appendChild(chip);
+    // 日付グループに入っているタブは、グループ名が同じ日付を示すのでチップは重複。
+    // 当日を迎えたものだけ ⏰ を残して気づけるようにする
+    const shownByGroup = group?.name === `📅 ${tab.scheduledFor}`;
+    if (!shownByGroup || due) {
+      // 年内は月日だけ。年をまたぐ予定は年も出す（08/06 が実は来年、を防ぐ）
+      const sameYear = tab.scheduledFor.slice(0, 4) === localToday().slice(0, 4);
+      const label = sameYear
+        ? tab.scheduledFor.slice(5).replace('-', '/')
+        : tab.scheduledFor.replace(/-/g, '/');
+      const chip = document.createElement('span');
+      chip.className = 'schedule-chip' + (due ? ' due' : '');
+      chip.textContent = shownByGroup ? '⏰' : `${due ? '⏰' : '⏳'}${label}`;
+      chip.title = due ? `再開予定日が来ています: ${tab.scheduledFor}` : `再開予定: ${tab.scheduledFor}`;
+      tabEl.appendChild(chip);
+    }
   }
 
   const badge = document.createElement('span');
