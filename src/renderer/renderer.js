@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon */
+/* global Terminal, FitAddon, WebLinksAddon */
 
 let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
@@ -565,6 +565,13 @@ function applySettings() {
   }
 }
 
+// ターミナル出力中のリンクを開く。通常クリック=組み込みブラウザペイン、
+// Cmd+クリック=OS既定ブラウザ。ファイルパス等のハンドラ追加はここに集約する
+function handleLinkOpen(event, uri) {
+  if (event.metaKey) window.mimi.openExternal(uri);
+  else openBrowserPane(uri);
+}
+
 function ensureTerm(tab) {
   let entry = terms.get(tab.id);
   if (entry) return entry;
@@ -593,6 +600,7 @@ function ensureTerm(tab) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(handleLinkOpen));
   term.open(container);
   term.onData((data) => window.mimi.ptyInput(tab.id, data));
   term.onResize(({ cols, rows }) => window.mimi.ptyResize(tab.id, cols, rows));

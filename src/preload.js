@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('mimi', {
   onClaudeSessions: (cb) => ipcRenderer.on('claude:sessions', (_e, sessions) => cb(sessions)),
   onStateReload: (cb) => ipcRenderer.on('state:reload', (_e, state) => cb(state)),
   browserAttached: (webContentsId) => ipcRenderer.send('browser:attached', webContentsId),
+  openExternal: (url) => ipcRenderer.send('link:open-external', url),
   onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
   getCalendar: () => ipcRenderer.invoke('calendar:get'),
   onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
