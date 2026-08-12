@@ -1165,6 +1165,41 @@ function renderStatusBar() {
   btn.classList.toggle('urgent', pct >= 70);
 }
 
+// 📋 直近の回答をコピー。画面の選択範囲ではなくtranscriptの生テキストを使うので装飾が混ざらない
+const copyBtn = document.getElementById('sb-copy');
+let copyResetTimer = null;
+function flashCopyResult(label, ok) {
+  clearTimeout(copyResetTimer);
+  copyBtn.textContent = label;
+  copyBtn.classList.toggle('done', ok);
+  copyBtn.classList.toggle('failed', !ok);
+  copyResetTimer = setTimeout(() => {
+    copyBtn.textContent = '📋 回答をコピー';
+    copyBtn.classList.remove('done', 'failed');
+  }, 1800);
+}
+
+copyBtn.addEventListener('click', async (e) => {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId);
+  if (!tab) return;
+  const res = await window.mimi.copyLastMessage({
+    tmuxSession: tab.tmuxSession,
+    mode: e.shiftKey ? 'full' : 'auto',
+  });
+  if (!res?.ok) {
+    const reason =
+      res?.reason === 'no-transcript'
+        ? 'このタブにClaudeの記録がまだない'
+        : res?.reason === 'no-message'
+          ? '回答が見つからない'
+          : '読み取り失敗';
+    flashCopyResult(`✕ ${reason}`, false);
+    return;
+  }
+  const what = res.source === 'block' ? `コードブロック${res.blocks > 1 ? `(末尾/${res.blocks}個中)` : ''}` : '回答全文';
+  flashCopyResult(`✓ ${what} ${res.chars}字`, true);
+});
+
 document.getElementById('sb-handoff').addEventListener('click', () => {
   const entry = terms.get(state.activeTabId);
   if (!entry || !entry.attached) return;

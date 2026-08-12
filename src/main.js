@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -556,6 +556,68 @@ function collectClaudeSessions() {
   return result;
 }
 
+// ---------- 回答のコピー（transcript由来） ----------
+// 画面から拾うとレンダラーの装飾（行頭2スペース・⏺/⎿・表の罫線・折り返し改行・NBSP）が混ざる。
+// transcript のJSONLにはClaudeが出力した生テキストがそのまま入っているので、そちらを正とする。
+
+const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
+
+function readLastAssistantText(transcriptPath) {
+  const st = fs.statSync(transcriptPath);
+  const size = Math.min(st.size, TRANSCRIPT_TAIL_BYTES);
+  const buf = Buffer.alloc(size);
+  const fd = fs.openSync(transcriptPath, 'r');
+  try {
+    fs.readSync(fd, buf, 0, size, st.size - size);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const lines = buf.toString('utf8').split('\n');
+  if (size < st.size) lines.shift(); // 途中から読んだ場合、先頭行は壊れている
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type !== 'assistant') continue;
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
+      .map((c) => c.text)
+      .join('\n')
+      .trim();
+    if (text) return text; // ツール呼び出しだけのassistant行は読み飛ばして、本文のある最後の回答を返す
+  }
+  return null;
+}
+
+function extractFencedBlocks(text) {
+  return [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n+$/, ''));
+}
+
+ipcMain.handle('clipboard:copy-last', (_e, { tmuxSession, mode }) => {
+  const info = collectClaudeSessions()[tmuxSession];
+  if (!info?.transcriptPath) return { ok: false, reason: 'no-transcript' };
+  let text;
+  try {
+    text = readLastAssistantText(info.transcriptPath);
+  } catch {
+    return { ok: false, reason: 'read-failed' };
+  }
+  if (!text) return { ok: false, reason: 'no-message' };
+  const blocks = extractFencedBlocks(text);
+  // 既定はコードブロックがあれば最後のものだけ（＝貼り付け用の文面はたいてい末尾に置かれる）
+  const useBlock = mode !== 'full' && blocks.length > 0;
+  const payload = useBlock ? blocks[blocks.length - 1] : text;
+  clipboard.writeText(payload);
+  return { ok: true, source: useBlock ? 'block' : 'full', chars: payload.length, blocks: blocks.length };
+});
+
 // ---------- 通知（アプリ→ユーザー方向） ----------
 // タブが「考え中→応答待ち」に変わった時と、コンテキストが70%を超えた時に知らせる
 const workingStreak = new Map(); // tmuxSession -> 連続で作業中だったtick数
@@ -841,6 +903,7 @@ if (!app.requestSingleInstanceLock()) {
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,
       browser: browserOps,
+      clipboard: { write: (text) => clipboard.writeText(text) },
       // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
       mutateState: (fn) => {
         const state = loadState();

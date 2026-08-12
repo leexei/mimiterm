@@ -9,7 +9,7 @@ const path = require('path');
 
 const CONFIG_FILE = path.join(os.homedir(), '.mimiterm', 'mcp.json');
 const DEFAULT_PORT = 48237;
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.4.0';
 
 function loadConfig() {
   try {
@@ -409,6 +409,24 @@ const TOOLS = [
     description: '埋め込みブラウザの表示内容をPNGに保存してファイルパスを返す。Readツールでそのパスを開くと見た目を画像で確認できる。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (_args, ctx) => ctx.browser.screenshot(),
+  },
+  {
+    name: 'copy_to_clipboard',
+    description:
+      'テキストをmacOSのクリップボードへ直接入れる。ユーザーがそのまま貼り付けて使う文面(Slack投稿・コミットメッセージ等)を渡す用途。' +
+      'ターミナル表示を経由しないので、行頭スペース・罫線・折り返し改行といった装飾が一切混ざらない。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'クリップボードに入れる本文（そのまま貼り付けられる状態で渡すこと）' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) => {
+      ctx.clipboard.write(args.text);
+      return { ok: true, chars: args.text.length };
+    },
   },
 ];
 

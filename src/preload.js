@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('mimi', {
   browserAttached: (webContentsId) => ipcRenderer.send('browser:attached', webContentsId),
   openExternal: (url) => ipcRenderer.send('link:open-external', url),
   onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
+  copyLastMessage: (opts) => ipcRenderer.invoke('clipboard:copy-last', opts),
   getCalendar: () => ipcRenderer.invoke('calendar:get'),
   onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
   onTabActivate: (cb) => ipcRenderer.on('tab:activate', (_e, tabId) => cb(tabId)),

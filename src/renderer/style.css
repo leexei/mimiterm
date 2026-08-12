@@ -677,7 +677,8 @@ html, body, #app {
   flex: 1;
 }
 
-#sb-handoff {
+#sb-handoff,
+#sb-copy {
   background: var(--bg-hover);
   border: none;
   border-radius: 12px;
@@ -688,8 +689,20 @@ html, body, #app {
   white-space: nowrap;
 }
 
-#sb-handoff:hover {
+#sb-handoff:hover,
+#sb-copy:hover {
   background: var(--bg-active);
+}
+
+/* コピー結果の一時フィードバック */
+#sb-copy.done {
+  background: rgba(166, 227, 161, 0.2);
+  color: #a6e3a1;
+}
+
+#sb-copy.failed {
+  background: rgba(243, 139, 168, 0.2);
+  color: #f38ba8;
 }
 
 /* コンテキスト逼迫時は引き継ぎを促す見た目にする */

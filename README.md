@@ -18,7 +18,8 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **セッションインポート**: 過去のClaude Codeセッションを選んで `claude --resume` 付きタブを生成
 - **埋め込みブラウザ**: SSOセッション永続のブラウザペイン。選択テキストをClaude入力欄へ引用注入
 - **ハンドオフ**: ターミナル下部のステータスバーに現在タブのコンテキスト使用率と「🔀 ハンドオフ」ボタン。70%を超えるとボタンが強調表示され、押すと「スナップショットを書いて新しいタブへ引き継ぐ」依頼がClaudeへ送られる（新タブ作成はMCPの `create_tab` が担う）
-- **内蔵MCPサーバー（19ツール）**: タブ作成・整理・スケジュール・外観・ブラウザの読取/クリック/入力/ブックマークをClaudeから操作可能
+- **回答のクリーンコピー**: ステータスバーの「📋 回答をコピー」で直近のClaudeの回答をクリップボードへ。画面の選択範囲ではなく **transcript（JSONL）の生テキスト**を使うため、レンダラーが付ける行頭スペース・`⏺`/`⎿`・表の罫線・折り返し改行・NBSPが一切混ざらない。クリック=末尾のコードブロック、Shift+クリック=回答全文
+- **内蔵MCPサーバー（20ツール）**: タブ作成・整理・スケジュール・外観・ブラウザの読取/クリック/入力/ブックマーク・クリップボード書き込みをClaudeから操作可能
 
 ## 前提条件
 
@@ -88,6 +89,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 
 - タブ系: `list_tabs`（dueToday/contextPct等付き） / `create_tab`（起動コマンド指定可・ハンドオフ用） / `rename_tab` / `create_group` / `move_tab_to_group` / `collapse_group` / `set_tab_badge` / `schedule_tab` / `set_background`
 - ブラウザ系: `browser_navigate` / `browser_get_page` / `browser_get_selection` / `browser_get_styles`（セルの計算済み背景色） / `browser_click` / `browser_type` / `browser_screenshot` / `bookmark_list` / `bookmark_add` / `bookmark_remove`
+- その他: `copy_to_clipboard`（貼り付け用の文面をターミナル表示を経由せずクリップボードへ）
 
 ## セキュリティに関する注意
 
