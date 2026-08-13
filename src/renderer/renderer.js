@@ -524,6 +524,9 @@ function currentTheme() {
     background: bg ? `rgba(30, 30, 46, ${Math.max(0.4, 1 - opacity)})` : '#1e1e2e',
     foreground: '#cdd6f4',
     cursor: '#f5c2e7',
+    // 既定の明色ハイライトだと明色文字が同化して読めないため、暗めのsurface色を明示する
+    selectionBackground: '#585b70',
+    selectionInactiveBackground: '#45475a',
   };
 }
 
@@ -585,6 +588,9 @@ function ensureTerm(tab) {
     fontSize: 13,
     scrollback: 10000,
     allowTransparency: true,
+    // Claude Code等がマウスモードを使っていても、素のドラッグはxtermネイティブ選択にする
+    // （アプリ独自の選択描画は明色文字が読めないため。アプリへのマウス送信はAlt+操作で可能）
+    mouseEventsRequireAlt: true,
     theme: currentTheme(),
   });
   // Shift+Enter / Option+Enter は ESC CR を送る（Claude Code が改行として解釈する。
