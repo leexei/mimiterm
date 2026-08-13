@@ -103,6 +103,8 @@ npm start            # 開発起動（アプリ名がElectronになるのは仕�
 npm run deploy       # パッケージ + /Applications へ反映（MimiTerm.app実行中は先に終了）
 ```
 
+**deployは必ずアプリを終了してから行い、直後に再起動すること。** 実行中のアプリの下でrsync反映すると、メインプロセスは旧コードのままレンダラだけがクラッシュ→再起動で新コードを読み、世代混在で新規タブがPTY作成前に失敗する（真っ白なタブになる）。タブはすべてtmuxバックのため、アプリを終了・再起動してもセッションは失われない。
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
@@ -112,6 +114,7 @@ npm run deploy       # パッケージ + /Applications へ反映（MimiTerm.app�
 | 今日パネルが出ない | `calendarCommand` 未設定かつ再開予定日タブ無しなら仕様。`calendarCommand` 設定済みなら `~/.mimiterm/calendar-debug.log` を確認 |
 | ブラウザでSSOが弾かれる | Chrome相当UAを名乗る対策済み。デバイス準拠ポリシー必須の環境では不可 |
 | タブを閉じてもtmuxセッションが残った | `tmux kill-session -t <mimi-...>` で手動削除 |
+| 新規タブが真っ白（何も描画されない） | アプリ実行中にdeployした際のプロセス世代混在が典型原因。MimiTermを完全終了（Cmd+Q）→再起動 |
 
 ## アンインストール
 
