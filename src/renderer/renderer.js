@@ -588,6 +588,9 @@ function ensureTerm(tab) {
     fontSize: 13,
     scrollback: 10000,
     allowTransparency: true,
+    // Claude Code等がマウスモードを使っていても、素のドラッグはxtermネイティブ選択にする
+    // （アプリ独自の選択描画は明色文字が読めないため。アプリへのマウス送信はAlt+操作で可能）
+    mouseEventsRequireAlt: true,
     theme: currentTheme(),
   });
   // Shift+Enter / Option+Enter は ESC CR を送る（Claude Code が改行として解釈する。
