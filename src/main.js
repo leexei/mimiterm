@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -197,6 +197,11 @@ ipcMain.handle('tmux:capture', (_e, sessionName) => {
 ipcMain.on('tmux:kill-session', (_e, name) => {
   execFile(TMUX, ['kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
+});
+
+// ターミナル出力中のリンクをOS既定ブラウザで開く（http/https以外は開かない）
+ipcMain.on('link:open-external', (_e, url) => {
+  if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
 });
 
 // ---------- 埋め込みブラウザ（webview）の guest webContents を掌握し、MCPから読めるようにする ----------
