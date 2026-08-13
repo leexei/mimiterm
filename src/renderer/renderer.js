@@ -467,7 +467,12 @@ function deleteGroup(group) {
   render();
 }
 
-function createTab(groupId) {
+// settings.autoTrustNewTabs 有効時、タブ起動前にcwd（省略時はホーム）のtrustダイアログを事前承認する
+async function autoTrustCwd(cwd) {
+  if (state.settings?.autoTrustNewTabs === true) await window.mimi.trustDir(cwd || '');
+}
+
+async function createTab(groupId) {
   const tab = {
     id: uid('t'),
     name: '新しいタブ',
@@ -479,6 +484,7 @@ function createTab(groupId) {
   if (group) group.collapsed = false;
   save();
   render();
+  await autoTrustCwd();
   activateTab(tab.id);
 }
 
@@ -749,6 +755,7 @@ async function consumePendingTabs() {
     save();
     const safeCwd = cwd ? cwd.replace(/'/g, `'\\''`) : '';
     const initial = cmd && safeCwd ? `cd '${safeCwd}' && ${cmd}` : cmd || (safeCwd ? `cd '${safeCwd}'` : '');
+    await autoTrustCwd(cwd);
     if (focus) {
       await activateTab(tab.id, initial);
     } else {

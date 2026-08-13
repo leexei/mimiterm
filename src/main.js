@@ -348,9 +348,10 @@ const browserOps = {
 };
 
 // 指定ディレクトリの Claude trust ダイアログを事前承認する。
-// インポート（過去セッションの resume）時のみ使用 — 過去に作業していたディレクトリに限る想定
+// autoTrustImports（インポート時）/ autoTrustNewTabs（タブ作成時）が有効な場合のみ呼ばれる
 ipcMain.handle('claude:trust-dir', (_e, dir) => {
   const claudeJson = path.join(os.homedir(), '.claude.json');
+  if (!dir) dir = os.homedir(); // UI新規タブはcwd未指定＝ホーム
   try {
     const config = JSON.parse(fs.readFileSync(claudeJson, 'utf8'));
     config.projects = config.projects || {};
