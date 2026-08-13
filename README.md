@@ -94,7 +94,8 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 - MCPサーバーは `127.0.0.1` のみにバインドし、Bearerトークン（`~/.mimiterm/mcp.json`、パーミッション600、定数時間比較）で認証する。ブラウザ由来のクロスオリジン要求（DNSリバインディング）は拒否する。トークンを共有・コミットしないこと
 - MCPには**任意コマンド実行ツールもターミナルへの入力ツールも意図的に存在しない**。Claudeが操作できるのはタブ整理・スケジュール・外観・ブラウザペインのみ
 - 埋め込みブラウザはSSOセッションを専用プロファイルに保持する。`browser_click` / `browser_type` を**SSO/MFA等の認証承認画面に使わないこと**（各ツールの説明文にも明記済み）。認証の承認は必ず人間が行う
-- `claudeModel` / `autoTrustImports` は既定OFF。有効化は各自の判断と責任で
+- `claudeModel` / `autoTrustImports` / `autoTrustNewTabs` は既定OFF。有効化は各自の判断と責任で
+  - `autoTrustNewTabs`: タブ作成時にそのcwd（UI新規タブはホーム）のClaude Trustダイアログを事前承認する。信頼できないリポジトリを開く運用では有効化しないこと
 
 ## 開発
 
