@@ -524,6 +524,9 @@ function currentTheme() {
     background: bg ? `rgba(30, 30, 46, ${Math.max(0.4, 1 - opacity)})` : '#1e1e2e',
     foreground: '#cdd6f4',
     cursor: '#f5c2e7',
+    // 既定の明色ハイライトだと明色文字が同化して読めないため、暗めのsurface色を明示する
+    selectionBackground: '#585b70',
+    selectionInactiveBackground: '#45475a',
   };
 }
 
