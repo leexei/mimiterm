@@ -135,6 +135,46 @@ def call(name, args):
 
 HOME_GROUP = '作業場'
 
+# ---------- カレンダー作業ブロック ----------
+# 予定日を付けた時に、その日のカレンダーへ作業ブロック（タブ名のイベント）も登録する。
+# 設定ファイル ~/.mimiterm/calendar-sync.json（任意）:
+#   {
+#     "enabled": true,
+#     "durationMin": 60,
+#     "rules": [ {"match": "PROJ-", "code": "@@PROJECT::PROCESS@@"},   # タブ名 or グループ名の部分一致（先勝ち）
+#                {"group": "問い合わせ", "code": "@@PROJECT::PROCESS2@@"} ],
+#     "default": "@@PROJECT::PROCESS@@"
+#   }
+# code は CrowdLog sync code（イベントの notes に入り、Calendar Sync 拡張が読む）。
+# ファイルが無ければ作業ブロックは登録しない（タブの予定日だけ付ける）
+import os
+
+CAL_CFG = os.path.expanduser('~/.mimiterm/calendar-sync.json')
+
+
+def calendar_spec(tab):
+    try:
+        cfg = json.load(open(CAL_CFG))
+    except Exception:
+        return None
+    if not cfg.get('enabled', True):
+        return None
+    name = (tab or {}).get('name') or ''
+    group = (tab or {}).get('group') or ''
+    code = None
+    for rule in cfg.get('rules', []):
+        if rule.get('group') and rule['group'] in group:
+            code = rule.get('code')
+        elif rule.get('match') and (rule['match'] in name or rule['match'] in group):
+            code = rule.get('code')
+        if code:
+            break
+    code = code or cfg.get('default')
+    spec = {'durationMin': int(cfg.get('durationMin') or 60)}
+    if code:
+        spec['syncCode'] = code
+    return spec
+
 
 PENDING_BADGE = '🤔'  # 「別日にやる話は出たが日付未定」の印
 
@@ -166,7 +206,11 @@ tab = current_tab()
 
 if d:
     iso = d.isoformat()
-    call('schedule_tab', {'tab': sess, 'date': iso})
+    sched = {'tab': sess, 'date': iso}
+    spec = calendar_spec(tab)
+    if spec:
+        sched['calendar'] = spec
+    call('schedule_tab', sched)
     call('move_tab_to_group', {'tab': sess, 'group': f'📅 {iso}'})
     # 🤔（日付未定の印）の解除は schedule_tab 側で行われる
 elif re.search(r'(後日|別日|保留|ペンディング|持ち越|あとで|次回)', tail):

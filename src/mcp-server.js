@@ -9,7 +9,7 @@ const path = require('path');
 
 const CONFIG_FILE = path.join(os.homedir(), '.mimiterm', 'mcp.json');
 const DEFAULT_PORT = 48237;
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.5.0';
 
 function loadConfig() {
   try {
@@ -61,6 +61,82 @@ function tabSummary(state, tab, claudeSessions) {
     scheduledFor: tab.scheduledFor ?? null,
     dueToday: !!(tab.scheduledFor && tab.scheduledFor <= new Date().toLocaleDateString('sv-SE')),
   };
+}
+
+// ---------- schedule_tab のカレンダー作業ブロック ----------
+const DEFAULT_BLOCK_START = '10:00';
+const DEFAULT_BLOCK_MIN = 60;
+
+const toMin = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+const toHHMM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const tail = (s) => String(s || '').trim().split('\n').filter(Boolean).slice(-3).join(' / ');
+
+// calendar-helper `free` の出力（"  HH:MM - HH:MM  (1h30m)" 行）から空き枠を拾う
+function parseFreeSlots(text) {
+  const slots = [];
+  for (const line of String(text || '').split('\n')) {
+    const m = /^\s*(\d{2}:\d{2}) - (\d{2}:\d{2})\s+\(/.exec(line);
+    if (m) slots.push({ start: toMin(m[1]), end: toMin(m[2]) });
+  }
+  return slots;
+}
+
+// start/end/durationMin から枠を決める。start 省略時は free の先頭で収まる枠、無ければ既定時刻
+async function resolveBlockSlot(ctx, date, spec) {
+  const duration = Number(spec.durationMin) > 0 ? Number(spec.durationMin) : DEFAULT_BLOCK_MIN;
+  const explicitStart = toMin(spec.start);
+  if (spec.start && explicitStart == null) throw new Error(`start は HH:MM 形式で指定してください: ${spec.start}`);
+  if (explicitStart != null) {
+    const explicitEnd = toMin(spec.end);
+    if (spec.end && explicitEnd == null) throw new Error(`end は HH:MM 形式で指定してください: ${spec.end}`);
+    const end = explicitEnd != null ? explicitEnd : explicitStart + duration;
+    if (end <= explicitStart) throw new Error('end は start より後にしてください');
+    return { start: toHHMM(explicitStart), end: toHHMM(end), slotSource: 'explicit' };
+  }
+  const free = await ctx.calendar(['free', date]);
+  if (free.ok) {
+    const slot = parseFreeSlots(free.output).find((s) => s.end - s.start >= duration);
+    if (slot) return { start: toHHMM(slot.start), end: toHHMM(slot.start + duration), slotSource: 'free' };
+  }
+  const start = toMin(DEFAULT_BLOCK_START);
+  return {
+    start: toHHMM(start),
+    end: toHHMM(start + duration),
+    slotSource: 'default',
+    warning: free.ok
+      ? `${date} に ${duration} 分の空きが見つからなかったので既定の枠にしました。時間を調整してください`
+      : `空き時間を取得できなかったので既定の枠にしました（${tail(free.output || free.error)}）。時間を調整してください`,
+  };
+}
+
+async function createCalendarBlock(ctx, spec) {
+  const slot = await resolveBlockSlot(ctx, spec.date, spec);
+  const res = await ctx.calendar([
+    'add',
+    spec.title,
+    `${spec.date} ${slot.start}`,
+    `${spec.date} ${slot.end}`,
+    spec.syncCode || '',
+  ]);
+  const syncLine = (res.output || '').split('\n').find((l) => l.startsWith('sync:'));
+  const out = {
+    ok: res.ok,
+    title: spec.title,
+    date: spec.date,
+    start: slot.start,
+    end: slot.end,
+    slotSource: slot.slotSource,
+    sync: syncLine ? syncLine.replace(/^sync:\s*/, '') : null,
+  };
+  const warnings = [];
+  if (slot.warning) warnings.push(slot.warning);
+  if (!res.ok) warnings.push(`カレンダー登録に失敗しました: ${tail(res.output || res.error)}`);
+  else if (!syncLine || /unresolved/.test(syncLine)) warnings.push('CrowdLog sync code が付いていません。syncCode を指定してください');
+  if (warnings.length) out.warning = warnings.join(' / ');
+  return out;
 }
 
 const TAB_REF_DESC = 'タブの参照（タブID / tmuxセッション名 / タブ名のいずれか）';
@@ -236,28 +312,93 @@ const TOOLS = [
   {
     name: 'schedule_tab',
     description:
-      'タブに再開予定日を設定する（例: 3日後に再開するタスク）。設定するとタブに ⏳日付 が表示される。date に空文字で解除。',
+      'タブに再開予定日を設定する（例: 3日後に再開するタスク）。設定するとタブに ⏳日付 が表示される。date に空文字で解除。' +
+      'calendar を渡すと、その日のカレンダーに作業ブロック（タブ名のイベント）も登録する。' +
+      'start 省略時は空き時間の先頭（取得できなければ 10:00）から durationMin 分。' +
+      '再開日を変えると作業ブロックも追従し、解除すると削除する。',
     inputSchema: {
       type: 'object',
       properties: {
         tab: { type: 'string', description: TAB_REF_DESC },
         date: { type: 'string', description: '再開予定日 YYYY-MM-DD。空文字で解除' },
+        calendar: {
+          type: 'object',
+          description: 'カレンダーに作業ブロックを登録する場合に指定',
+          properties: {
+            start: { type: 'string', description: '開始 HH:MM（省略時は空き時間から自動）' },
+            end: { type: 'string', description: '終了 HH:MM（省略時は start + durationMin）' },
+            durationMin: { type: 'integer', description: '所要分。既定 60' },
+            syncCode: {
+              type: 'string',
+              description: 'CrowdLog sync code（@@PROJECT::PROCESS@@ 形式）。イベントの notes に入れる',
+            },
+            title: { type: 'string', description: 'イベント名（省略時はタブ名）' },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['tab', 'date'],
       additionalProperties: false,
     },
-    handler: (args, ctx) =>
-      ctx.mutateState((state) => {
+    handler: async (args, ctx) => {
+      if (args.date && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
+        throw new Error(`日付は YYYY-MM-DD 形式で指定してください: ${args.date}`);
+      }
+      const date = args.date || null;
+      const { tabId, tabName, before } = ctx.mutateState((state) => {
         const tab = resolveTab(state, args.tab);
         if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
-        if (args.date && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
-          throw new Error(`日付は YYYY-MM-DD 形式で指定してください: ${args.date}`);
-        }
-        tab.scheduledFor = args.date || null;
+        tab.scheduledFor = date;
         // 「日付未定」を意味する 🤔 は、予定が確定したら不要になるので外す
-        if (args.date && tab.badgeEmoji === '🤔') tab.badgeEmoji = null;
-        return { ok: true, tab: tab.name, scheduledFor: tab.scheduledFor };
-      }),
+        if (date && tab.badgeEmoji === '🤔') tab.badgeEmoji = null;
+        return { tabId: tab.id, tabName: tab.name, before: tab.calendarBlock || null };
+      });
+      const result = { ok: true, tab: tabName, scheduledFor: date };
+
+      // 再開日が変わった／解除された時は、前に作った作業ブロックを片付ける。
+      // 日付だけ変わって calendar の指定が無い場合は、同じ枠を新しい日に作り直す
+      let calendar = args.calendar || null;
+      const dateChanged = before && before.date !== date;
+      if (before && (!date || dateChanged || calendar)) {
+        if (!ctx.calendar) {
+          result.calendar = { ok: false, warning: 'このMimiTermはカレンダー連携に未対応です' };
+          return result;
+        }
+        const del = await ctx.calendar(['delete', before.title, before.date]);
+        ctx.mutateState((state) => {
+          const tab = state.tabs.find((t) => t.id === tabId);
+          if (tab) delete tab.calendarBlock;
+        });
+        result.calendar = { ok: del.ok, removed: { date: before.date, title: before.title } };
+        if (!del.ok) result.calendar.warning = `前の作業ブロックを削除できませんでした: ${tail(del.output || del.error)}`;
+        if (!calendar && date && dateChanged) {
+          calendar = { start: before.start, end: before.end, syncCode: before.syncCode, title: before.title };
+        }
+      }
+      if (!date || !calendar) return result;
+
+      if (!ctx.calendar) {
+        result.calendar = { ok: false, warning: 'このMimiTermはカレンダー連携に未対応です' };
+        return result;
+      }
+      const block = await createCalendarBlock(ctx, { date, title: calendar.title || tabName, ...calendar });
+      result.calendar = { ...(result.calendar || {}), ...block };
+      if (block.ok) {
+        ctx.mutateState((state) => {
+          const tab = state.tabs.find((t) => t.id === tabId);
+          if (tab) {
+            tab.calendarBlock = {
+              date,
+              title: block.title,
+              start: block.start,
+              end: block.end,
+              syncCode: calendar.syncCode || null,
+            };
+          }
+        });
+      }
+      return result;
+    },
   },
   {
     name: 'set_background',
@@ -549,3 +690,5 @@ function startMcpServer(ctx) {
 }
 
 module.exports = { startMcpServer };
+
+module.exports._internal = { parseFreeSlots, resolveBlockSlot, createCalendarBlock, toMin, toHHMM };

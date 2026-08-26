@@ -500,6 +500,41 @@ function refreshCalendar() {
 
 setInterval(refreshCalendar, 5 * 60 * 1000);
 
+// ---------- カレンダー書き込み（schedule_tab のカレンダー連携） ----------
+// 読み取り（refreshCalendar）と同じ理由でtmuxサーバーのコンテキストで実行する。
+// 実行するのは calendar-helper 互換のスクリプト（add/delete/free サブコマンドを持つもの）。
+// settings.calendarHelper が無ければ calendarCommand の末尾 "today" を外したものを使う
+function calendarHelperBase() {
+  const s = loadState().settings || {};
+  if (s.calendarHelper) return s.calendarHelper;
+  if (s.calendarCommand) return s.calendarCommand.replace(/\s+today\s*$/, '');
+  return null;
+}
+
+const shellQuote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+
+function runCalendarHelper(args) {
+  return new Promise((resolve) => {
+    const base = calendarHelperBase();
+    if (!base) {
+      resolve({ ok: false, output: '', error: 'settings.calendarCommand が未設定です' });
+      return;
+    }
+    const outFile = path.join(STATE_DIR, `calendar-rw-${Date.now().toString(36)}.txt`);
+    const cmd = `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${base} ${args.map(shellQuote).join(' ')} > ${shellQuote(outFile)} 2>&1`;
+    execFile(TMUX, ['run-shell', cmd], { timeout: 30000 }, (err) => {
+      let output = '';
+      try {
+        output = fs.readFileSync(outFile, 'utf8');
+        fs.unlinkSync(outFile);
+      } catch {
+        // 出力ファイルなし
+      }
+      resolve({ ok: !err, output, error: err ? String(err) : null });
+    });
+  });
+}
+
 ipcMain.handle('calendar:get', () => calendarCache);
 
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
@@ -904,6 +939,7 @@ if (!app.requestSingleInstanceLock()) {
       getClaudeSessions: collectClaudeSessions,
       browser: browserOps,
       clipboard: { write: (text) => clipboard.writeText(text) },
+      calendar: runCalendarHelper,
       // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
       mutateState: (fn) => {
         const state = loadState();
