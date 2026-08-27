@@ -522,7 +522,9 @@ function runCalendarHelper(args) {
     }
     const outFile = path.join(STATE_DIR, `calendar-rw-${Date.now().toString(36)}.txt`);
     const cmd = `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${base} ${args.map(shellQuote).join(' ')} > ${shellQuote(outFile)} 2>&1`;
-    execFile(TMUX, ['run-shell', cmd], { timeout: 30000 }, (err) => {
+    // Calendar.app の AppleScript は遅い（uid 削除でも 20 秒前後）。短すぎると途中で見捨てた
+    // 処理が裏で完走し、結果と状態が食い違う
+    execFile(TMUX, ['run-shell', cmd], { timeout: 180000 }, (err) => {
       let output = '';
       try {
         output = fs.readFileSync(outFile, 'utf8');

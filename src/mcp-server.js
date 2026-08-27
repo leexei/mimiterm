@@ -122,6 +122,7 @@ async function createCalendarBlock(ctx, spec) {
     spec.syncCode || '',
   ]);
   const syncLine = (res.output || '').split('\n').find((l) => l.startsWith('sync:'));
+  const uidLine = (res.output || '').split('\n').find((l) => l.startsWith('uid:'));
   const out = {
     ok: res.ok,
     title: spec.title,
@@ -130,6 +131,7 @@ async function createCalendarBlock(ctx, spec) {
     end: slot.end,
     slotSource: slot.slotSource,
     sync: syncLine ? syncLine.replace(/^sync:\s*/, '') : null,
+    uid: uidLine ? uidLine.replace(/^uid:\s*/, '').trim() : null,
   };
   const warnings = [];
   if (slot.warning) warnings.push(slot.warning);
@@ -364,7 +366,8 @@ const TOOLS = [
           result.calendar = { ok: false, warning: 'このMimiTermはカレンダー連携に未対応です' };
           return result;
         }
-        const del = await ctx.calendar(['delete', before.title, before.date]);
+        // uid があれば直接削除（title+date の削除は全件走査で数分かかる）
+        const del = await ctx.calendar(before.uid ? ['delete-uid', before.uid] : ['delete', before.title, before.date]);
         ctx.mutateState((state) => {
           const tab = state.tabs.find((t) => t.id === tabId);
           if (tab) delete tab.calendarBlock;
@@ -392,6 +395,7 @@ const TOOLS = [
               title: block.title,
               start: block.start,
               end: block.end,
+              uid: block.uid || null,
               syncCode: calendar.syncCode || null,
             };
           }
