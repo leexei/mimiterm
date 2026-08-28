@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon */
+/* global Terminal, FitAddon, WebLinksAddon, Unicode11Addon */
 
 let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
@@ -613,6 +613,10 @@ function ensureTerm(tab) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon.WebLinksAddon(handleLinkOpen));
+  // 既定の幅テーブルは絵文字をセル幅1と数えるため後続文字が絵文字の裏に潜る。
+  // Unicode 11幅（絵文字=2セル）に切り替えて描画とセル割当を一致させる
+  term.loadAddon(new Unicode11Addon.Unicode11Addon());
+  term.unicode.activeVersion = '11';
   term.open(container);
   term.onData((data) => window.mimi.ptyInput(tab.id, data));
   term.onResize(({ cols, rows }) => window.mimi.ptyResize(tab.id, cols, rows));
