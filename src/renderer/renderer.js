@@ -594,6 +594,7 @@ function ensureTerm(tab) {
     fontSize: 13,
     scrollback: 10000,
     allowTransparency: true,
+    allowProposedApi: true, // Unicode11Addon が要求（6.1系ではproposed API扱い）
     // Claude Code等がマウスモードを使っていても、素のドラッグはxtermネイティブ選択にする
     // （アプリ独自の選択描画は明色文字が読めないため。アプリへのマウス送信はAlt+操作で可能）
     mouseEventsRequireAlt: true,
