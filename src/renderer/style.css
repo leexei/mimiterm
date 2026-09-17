@@ -311,7 +311,8 @@ html, body, #app {
 
 #add-group,
 #import-session,
-#recover-tab {
+#recover-tab,
+#diagnose-tab {
   margin-top: 8px;
   padding: 8px;
   background: none;
@@ -324,7 +325,8 @@ html, body, #app {
 
 #add-group:hover,
 #import-session:hover,
-#recover-tab:hover {
+#recover-tab:hover,
+#diagnose-tab:hover {
   color: var(--fg);
   border-color: var(--fg);
 }
@@ -576,6 +578,7 @@ html, body, #app {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* #toast の位置基準 */
 }
 
 #quickbar {
@@ -869,4 +872,42 @@ body.resizing #terminals {
   font-family: Menlo, "Hiragino Sans", monospace;
   font-size: 13px;
   line-height: normal;
+}
+
+/* 復旧トリアージの結果通知。ターミナル右下に浮かせる */
+#toast {
+  position: absolute;
+  right: 16px;
+  bottom: 44px;
+  max-width: 420px;
+  padding: 10px 14px;
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #585b70;
+  border-radius: 10px;
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  z-index: 30;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+#toast.visible {
+  display: flex;
+}
+
+#toast button {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  background: #45475a;
+  color: #f5c2e7;
+  border: 1px solid #585b70;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#toast button:hover {
+  background: #585b70;
 }

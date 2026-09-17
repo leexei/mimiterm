@@ -20,6 +20,7 @@
       <button id="add-group">＋ グループ</button>
       <button id="import-session">⬇ Claudeセッション取り込み</button>
       <button id="recover-tab" title="表示されない・入力できない時に、このタブのターミナルを作り直してtmuxへ再接続する（セッションの中身は失われない）">🚑 タブ復旧</button>
+      <button id="diagnose-tab" title="🚑で直らない時に、別タブでClaudeを起動して壊れたタブの状況を渡し、外から復旧してもらう">🆘 Claudeに診断してもらう</button>
       <div id="rate-limits"></div>
     </aside>
     <main id="main">
@@ -32,6 +33,7 @@
         <button id="sb-copy" title="直近の回答から貼り付け用の文面を装飾なしでコピー（クリック=コードブロック/引用 / Shift+クリック=回答全文）">📋 文面をコピー</button>
         <button id="sb-handoff" title="スナップショットを書いて新しいタブへ引き継ぐ">🔀 ハンドオフ</button>
       </div>
+      <div id="toast"></div>
     </main>
     <div id="browser-divider" class="hidden"></div>
     <div id="browser-pane" class="hidden">

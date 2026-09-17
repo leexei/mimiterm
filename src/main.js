@@ -189,6 +189,56 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
   ptys.delete(tabId);
 });
 
+// タブ復旧トリアージ用: セッションの有無と前面プロセス名を1回で返す
+ipcMain.handle('tmux:probe', (_e, sessionName) => {
+  return new Promise((resolve) => {
+    execFile(TMUX, ['display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
+      if (err) resolve({ exists: false, command: null });
+      else resolve({ exists: true, command: String(stdout).trim() });
+    });
+  });
+});
+
+// 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
+ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
+  return new Promise((resolve) => {
+    execFile(TMUX, ['capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
+      const capture = err ? `(capture-pane 失敗: ${err.message})` : String(stdout).replace(/\s+$/, '');
+      const file = path.join(STATE_DIR, 'diagnose', `${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        [
+          '# MimiTerm タブ復旧の診断依頼',
+          '',
+          'MimiTermの🆘ボタンが押された（🚑タブ復旧では直らなかった、またはユーザーが直接エスカレーションした）。',
+          '以下の壊れたタブを調査して復旧してほしい。',
+          '',
+          `- 対象タブ名: ${tabName}`,
+          `- tmuxセッション: ${tmuxSession}`,
+          `- ClaudeセッションID: ${claudeSessionId || '不明'}`,
+          `- 発生時刻: ${new Date().toLocaleString('ja-JP')}`,
+          '',
+          '## 対応ガイド',
+          '',
+          `- まず \`tmux has-session -t ${tmuxSession}\` 等で実態を確認する`,
+          '- 復旧手順はメモリ reference_mimiterm_tab_restore_procedure.md を参照（claude --resume での再開、描画だけ壊れた場合の swap-window 引っ越し等）',
+          '- 対象セッションへの操作は tmux send-keys / capture-pane、タブ操作は mimiterm MCP（list_tabs 等）を使う',
+          '- 直せたら何が原因だったかを一言で報告する',
+          '',
+          '## 直前の画面（capture-pane -S -50）',
+          '',
+          '```',
+          capture,
+          '```',
+          '',
+        ].join('\n')
+      );
+      resolve(file);
+    });
+  });
+});
+
 // ホバープレビュー用: セッションの現在画面をテキストで取得（LLM不要・低コスト）
 ipcMain.handle('tmux:capture', (_e, sessionName) => {
   return new Promise((resolve) => {

@@ -579,13 +579,59 @@ function removeTab(tab, killSession) {
 
 // ---------- terminals ----------
 
+// 復旧結果の通知。actionを渡すとボタン付きになる（例: claude --resume の提案）
+let toastTimer = null;
+function showToast(msg, action) {
+  const el = document.getElementById('toast');
+  el.replaceChildren();
+  el.appendChild(document.createTextNode(msg));
+  if (action) {
+    const btn = document.createElement('button');
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      hideToast();
+      action.run();
+    });
+    el.appendChild(btn);
+  }
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  // 提案付きは押す時間を長めに取る
+  toastTimer = setTimeout(hideToast, action ? 20000 : 5000);
+}
+function hideToast() {
+  document.getElementById('toast').classList.remove('visible');
+}
+
 // 緊急復旧: アクティブタブのxterm/ptyを丸ごと作り直してtmuxへ再attachする。
 // 描画が真っ白（WebGLコンテキスト喪失等）・入力が届かない（pty詰まり）・
 // attached状態の食い違い、いずれもtmuxセッション自体は無傷なので、
-// クライアント側を捨てて張り直せば画面ごと復元される。マウスだけで押せるのが要件
+// クライアント側を捨てて張り直せば画面ごと復元される。マウスだけで押せるのが要件。
+// 張り直し後に前面プロセスを確認し、claudeが死んでシェルに落ちていたらresumeを提案する
+const PLAIN_SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', '-zsh', '-bash']);
+
+function knownClaudeSessionId(tab) {
+  return claudeSessions[tab.tmuxSession]?.sessionId || tab.claudeSessionId || null;
+}
+
+function suggestResume(tab, reason) {
+  const sid = knownClaudeSessionId(tab);
+  if (!sid) {
+    showToast(`${reason}。再開できるClaudeセッションIDは見つからなかったよ`);
+    return;
+  }
+  showToast(`${reason}。前回のClaudeセッションを再開する？`, {
+    label: `▶ claude --resume ${sid.slice(0, 8)}…`,
+    run: () => window.mimi.ptyInput(tab.id, `claude --resume ${sid}\r`),
+  });
+}
+
 async function recoverActiveTab() {
   const tab = state.tabs.find((t) => t.id === state.activeTabId) || state.tabs[0];
   if (!tab) return;
+  // Step1: 張り直す前にtmuxセッションの生死を見ておく（張り直すと -A で必ず出来てしまうため）
+  const before = await window.mimi.tmuxProbe(tab.tmuxSession);
+  // Step2: クライアント側（xterm/pty）を丸ごと作り直して再attach
   const entry = terms.get(tab.id);
   terms.delete(tab.id);
   window.mimi.ptyKill(tab.id); // tmuxはdetachされるだけでセッションは生き残る
@@ -608,10 +654,46 @@ async function recoverActiveTab() {
     }
   }
   await activateTab(tab.id);
+  if (!before.exists) {
+    suggestResume(tab, 'tmuxセッションが消えていたので作り直したよ');
+    return;
+  }
+  showToast('ターミナルを張り直したよ');
+  // Step3: attachが落ち着いてから前面プロセスを確認。claudeのはずがシェルに落ちていたら提案
+  setTimeout(async () => {
+    const probe = await window.mimi.tmuxProbe(tab.tmuxSession);
+    if (probe.exists && PLAIN_SHELLS.has(probe.command) && knownClaudeSessionId(tab)) {
+      suggestResume(tab, 'ターミナルは張り直したけど、claudeが動いてないみたい');
+    }
+  }, 800);
 }
 
 document.getElementById('recover-tab').addEventListener('click', () => {
   recoverActiveTab();
+});
+
+// 🆘エスカレーション: 壊れたタブとは別の新規タブでclaudeを起動し、
+// 状況ファイル（capture-pane等）を渡して外から復旧してもらう。
+// 壊れたタブ自身やそのclaudeに依存しないので、🚑で直らないケースの保険になる
+document.getElementById('diagnose-tab').addEventListener('click', async () => {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId);
+  if (!tab) return;
+  const file = await window.mimi.diagnosePrepare({
+    tabName: tab.name,
+    tmuxSession: tab.tmuxSession,
+    claudeSessionId: knownClaudeSessionId(tab),
+  });
+  const dtab = {
+    id: uid('t'),
+    name: `🆘 ${tab.name} 診断`,
+    groupId: tab.groupId,
+    tmuxSession: uid('mimi'),
+  };
+  state.tabs.push(dtab);
+  save();
+  render();
+  await autoTrustCwd();
+  await activateTab(dtab.id, `claude '🆘MimiTermのタブ復旧依頼だよ。${file} を読んで、書かれているタブを調査・復旧して。'`);
 });
 
 // 背景画像設定（MCPのset_backgroundから変更される）
