@@ -579,6 +579,41 @@ function removeTab(tab, killSession) {
 
 // ---------- terminals ----------
 
+// 緊急復旧: アクティブタブのxterm/ptyを丸ごと作り直してtmuxへ再attachする。
+// 描画が真っ白（WebGLコンテキスト喪失等）・入力が届かない（pty詰まり）・
+// attached状態の食い違い、いずれもtmuxセッション自体は無傷なので、
+// クライアント側を捨てて張り直せば画面ごと復元される。マウスだけで押せるのが要件
+async function recoverActiveTab() {
+  const tab = state.tabs.find((t) => t.id === state.activeTabId) || state.tabs[0];
+  if (!tab) return;
+  const entry = terms.get(tab.id);
+  terms.delete(tab.id);
+  window.mimi.ptyKill(tab.id); // tmuxはdetachされるだけでセッションは生き残る
+  if (entry) {
+    clearTimeout(entry.syncTimer);
+    try {
+      entry.webgl?.dispose();
+    } catch {
+      // WebGLコンテキスト破棄失敗は無視してよい
+    }
+    try {
+      entry.term.dispose();
+    } catch {
+      // dispose中の例外で復旧を止めない
+    }
+    try {
+      entry.container.remove();
+    } catch {
+      // コンテナが既に外れていても続行
+    }
+  }
+  await activateTab(tab.id);
+}
+
+document.getElementById('recover-tab').addEventListener('click', () => {
+  recoverActiveTab();
+});
+
 // 背景画像設定（MCPのset_backgroundから変更される）
 function currentTheme() {
   const bg = state.settings?.background;

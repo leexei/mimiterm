@@ -160,9 +160,13 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
     }, 700);
   }
   p.onData((data) => {
+    // タブ復旧でptyを張り替えた後に旧ptyから届いた残データは捨てる
+    if (ptys.get(tabId) !== p) return;
     if (win && !win.isDestroyed()) win.webContents.send('pty:data', tabId, data);
   });
   p.onExit(() => {
+    // 同じtabIdで新しいptyが張り替え済みなら、旧ptyの終了で消したり通知したりしない
+    if (ptys.get(tabId) !== p) return;
     ptys.delete(tabId);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', tabId);
   });

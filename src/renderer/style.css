@@ -310,7 +310,8 @@ html, body, #app {
 }
 
 #add-group,
-#import-session {
+#import-session,
+#recover-tab {
   margin-top: 8px;
   padding: 8px;
   background: none;
@@ -322,7 +323,8 @@ html, body, #app {
 }
 
 #add-group:hover,
-#import-session:hover {
+#import-session:hover,
+#recover-tab:hover {
   color: var(--fg);
   border-color: var(--fg);
 }
