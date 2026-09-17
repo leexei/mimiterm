@@ -19,7 +19,10 @@ contextBridge.exposeInMainWorld('mimi', {
   openExternal: (url) => ipcRenderer.send('link:open-external', url),
   onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
   copyLastMessage: (opts) => ipcRenderer.invoke('clipboard:copy-last', opts),
+  readPaste: () => ipcRenderer.invoke('clipboard:read-paste'),
+  copyText: (text) => ipcRenderer.send('clipboard:write', text),
   getCalendar: () => ipcRenderer.invoke('calendar:get'),
   onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
   onTabActivate: (cb) => ipcRenderer.on('tab:activate', (_e, tabId) => cb(tabId)),
+  debugLog: (msg) => ipcRenderer.send('debug:log', String(msg)),
 });

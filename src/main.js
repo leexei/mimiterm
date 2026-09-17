@@ -6,6 +6,10 @@ const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { startMcpServer } = require('./mcp-server');
 
+// macOSのfdソフトリミット既定は256で、タブ数×pty + Chromium内部だけでほぼ使い切る。
+// 上限に達すると execFile(tmux/ps) が EMFILE で失敗し、稼働判定（スピナー・通知・Dockバッジ）が沈黙する
+process.setFdLimit(8192);
+
 const STATE_DIR = path.join(os.homedir(), '.mimiterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
@@ -634,7 +638,31 @@ function readLastAssistantText(transcriptPath) {
 }
 
 function extractFencedBlocks(text) {
-  return [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n+$/, ''));
+  return [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
+    .map((m) => m[1].replace(/\n+$/, ''))
+    .filter((s) => s.trim());
+}
+
+// 「貼り付け用の文面」は引用(>)で提示されることも多い。引用記号を外した本文を取り出す
+function extractBlockquotes(text) {
+  const blocks = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const m = /^ {0,3}>\s?(.*)$/.exec(line);
+    if (m) {
+      (current ||= []).push(m[1]);
+    } else if (current) {
+      blocks.push(current.join('\n').trim());
+      current = null;
+    }
+  }
+  if (current) blocks.push(current.join('\n').trim());
+  return blocks.filter(Boolean);
+}
+
+// 候補が複数ある時は最長のものを本命とみなす（手順コマンドより本文の方が長いのが通例）
+function pickLongest(list) {
+  return list.reduce((best, s) => (s.length >= best.length ? s : best), list[0]);
 }
 
 ipcMain.handle('clipboard:copy-last', (_e, { tmuxSession, mode }) => {
@@ -647,12 +675,64 @@ ipcMain.handle('clipboard:copy-last', (_e, { tmuxSession, mode }) => {
     return { ok: false, reason: 'read-failed' };
   }
   if (!text) return { ok: false, reason: 'no-message' };
-  const blocks = extractFencedBlocks(text);
-  // 既定はコードブロックがあれば最後のものだけ（＝貼り付け用の文面はたいてい末尾に置かれる）
-  const useBlock = mode !== 'full' && blocks.length > 0;
-  const payload = useBlock ? blocks[blocks.length - 1] : text;
+
+  const fenced = extractFencedBlocks(text);
+  const quoted = extractBlockquotes(text);
+  // 文面の提示手段はコードブロック → 引用 の順に優先する。どちらも無ければ回答全文
+  let source = 'full';
+  let candidates = [];
+  if (mode !== 'full') {
+    if (fenced.length) {
+      source = 'block';
+      candidates = fenced;
+    } else if (quoted.length) {
+      source = 'quote';
+      candidates = quoted;
+    }
+  }
+  const payload = candidates.length ? pickLongest(candidates) : text;
   clipboard.writeText(payload);
-  return { ok: true, source: useBlock ? 'block' : 'full', chars: payload.length, blocks: blocks.length };
+  return { ok: true, source, chars: payload.length, candidates: candidates.length };
+});
+
+// ---------- ペースト内容の解決 ----------
+// Finderでコピーしたファイル/フォルダは NSFilenamesPboardType にPOSIXパスのplistが入る。
+// テキスト形はファイル名だけになるので、ペースト時はこちらを優先してパスとして貼る
+
+const decodeXmlEntities = (s) =>
+  s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+
+ipcMain.on('clipboard:write', (_e, text) => {
+  if (text) clipboard.writeText(String(text));
+});
+
+ipcMain.handle('clipboard:read-paste', () => {
+  try {
+    const buf = clipboard.readBuffer('NSFilenamesPboardType');
+    if (buf && buf.length) {
+      const paths = [...buf.toString('utf8').matchAll(/<string>([\s\S]*?)<\/string>/g)]
+        .map((m) => decodeXmlEntities(m[1]))
+        .filter((p) => p.startsWith('/'));
+      if (paths.length) return { paths };
+    }
+  } catch {
+    // フォーマット未対応環境では素通し
+  }
+  try {
+    const url = clipboard.read('public.file-url');
+    if (url && url.startsWith('file://')) {
+      return { paths: [decodeURIComponent(url.replace(/^file:\/\/(localhost)?/, ''))] };
+    }
+  } catch {
+    // 同上
+  }
+  return { text: clipboard.readText() };
 });
 
 // ---------- 通知（アプリ→ユーザー方向） ----------
@@ -759,13 +839,30 @@ function collectAgentActivity(sessions, now) {
   return active;
 }
 
+// ---- 一時デバッグ計装（原因特定後に削除する） ----
+const DEBUG_TICK_LOG = path.join(STATE_DIR, 'debug-tick.log');
+const DEBUG_RENDERER_LOG = path.join(STATE_DIR, 'debug-renderer.log');
+function debugAppend(file, msg) {
+  try {
+    fs.appendFileSync(file, `${new Date().toISOString()} ${msg}\n`);
+  } catch {
+    // デバッグログ失敗は無視
+  }
+}
+ipcMain.on('debug:log', (_e, msg) => debugAppend(DEBUG_RENDERER_LOG, msg));
+
 setInterval(async () => {
-  if (!win || win.isDestroyed()) return;
+  try {
+  if (!win || win.isDestroyed()) {
+    debugAppend(DEBUG_TICK_LOG, 'skip: win missing/destroyed');
+    return;
+  }
+  const tickStart = Date.now(); // 一時デバッグ計装
   const out = await execFileP(TMUX, [
     'list-panes',
     '-a',
     '-F',
-    '#{session_name}\t#{window_activity}\t#{pane_current_command}\t#{pane_pid}',
+    '#{session_name}\t#{window_activity}\t#{pane_current_command}\t#{pane_pid}\t#{socket_path}',
   ]);
   const activity = {};
   const paneCommands = {};
@@ -836,6 +933,40 @@ setInterval(async () => {
   for (const sess of Object.keys(activity)) {
     if (working[sess]) lastWorkingAt.set(sess, now);
     else if (now - (lastWorkingAt.get(sess) || 0) < 5000) working[sess] = true;
+  }
+
+  // ---- 一時デバッグ計装: アプリが見ているtmuxの生の姿を毎tick記録（原因特定後に削除する） ----
+  {
+    const ages = Object.keys(activity).map((s) => now - activity[s]);
+    const minAge = ages.length ? Math.min(...ages) : -1;
+    const firstLine = out ? out.trim().split('\n')[0] : 'NO_OUTPUT';
+    debugAppend(
+      DEBUG_TICK_LOG,
+      `RAW minActAge=${minAge} execMs=${now - tickStart} tmux=${TMUX} ` +
+        `TMUX_TMPDIR=${process.env.TMUX_TMPDIR || '-'} TMPDIR=${process.env.TMPDIR || '-'} ` +
+        `first=[${firstLine}]`
+    );
+  }
+
+  // ---- 一時デバッグ計装: 出力が新鮮なセッションの信号中間値を吐く（原因特定後に削除する） ----
+  for (const sess of Object.keys(activity)) {
+    const age = now - activity[sess];
+    if (age < 6000) {
+      const info = sessions[sess];
+      let tAge = 'none';
+      if (info?.transcriptPath) {
+        try {
+          tAge = String(Math.round(now - fs.statSync(info.transcriptPath).mtimeMs));
+        } catch (e) {
+          tAge = `ERR:${e.code || e.message}`;
+        }
+      }
+      debugAppend(
+        DEBUG_TICK_LOG,
+        `DBG ${sess} actAge=${age} streak=${activityStreak.get(sess)} tAge=${tAge} ` +
+          `updAge=${info ? now - info.updatedAt : 'noinfo'} cmd=${paneCommands[sess]} working=${!!working[sess]}`
+      );
+    }
   }
 
   // ---- 通知とDockバッジ ----
@@ -912,6 +1043,16 @@ setInterval(async () => {
       shellProcs,
       rateLimits: latestRateLimits,
     });
+    debugAppend(
+      DEBUG_TICK_LOG,
+      `sent act=${Object.keys(activity).length} sess=${Object.keys(sessions).length} ` +
+        `cmds=${Object.keys(paneCommands).length} working=${Object.keys(working).filter((k) => working[k]).length} waiting=${waitingCount}`
+    );
+  } else {
+    debugAppend(DEBUG_TICK_LOG, 'not sent: win missing/destroyed at send');
+  }
+  } catch (e) {
+    debugAppend(DEBUG_TICK_LOG, `TICK ERROR: ${e.stack || e}`);
   }
 }, 1500);
 

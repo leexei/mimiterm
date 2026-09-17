@@ -1,5 +1,49 @@
 /* global Terminal, FitAddon, WebLinksAddon, Unicode11Addon */
 
+// ---- 一時デバッグ計装（原因特定後に削除する） ----
+window.addEventListener('error', (e) => {
+  window.mimi?.debugLog?.(`window.onerror: ${e.message} @${e.filename}:${e.lineno}`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.mimi?.debugLog?.(`unhandledrejection: ${e.reason?.stack || e.reason}`);
+});
+
+// シェル/Claude入力にそのまま渡せるよう、スペース等のシェル特殊文字だけをエスケープする
+// （日本語ファイル名はそのまま残す。Finderからターミナルへのドラッグと同じ流儀）
+function escapeShellPath(p) {
+  return p.replace(/([ !"#$&'()*,:;<=>?@[\\\]^`{|}])/g, '\\$1');
+}
+
+// Cmd+C はアクティブタブのターミナル選択を確実にコピーする。
+// xterm(canvas描画)の選択はDOM選択ではないため、既定のメニュー「コピー」は
+// フォーカスが端末の隠しtextareaに乗っている瞬間しか効かない（コピーできたり
+// できなかったりの原因）。keydownで横取りして明示的に書き込む
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!(e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c')) return;
+    const ae = document.activeElement;
+    // リネーム欄など通常の入力要素は素通し（xtermの隠しtextareaは除く）
+    if (
+      ae &&
+      (ae.tagName === 'INPUT' ||
+        (ae.tagName === 'TEXTAREA' && !ae.classList.contains('xterm-helper-textarea')))
+    )
+      return;
+    if (String(window.getSelection())) return; // サイドバー等のDOM選択は既定のコピーに任せる
+    const entry = terms.get(state.activeTabId);
+    if (entry && entry.term.hasSelection()) {
+      const text = entry.term.getSelection();
+      if (text) {
+        window.mimi.copyText(text);
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+  },
+  true
+);
+
 let state = { groups: [], tabs: [], activeTabId: null };
 const terms = new Map(); // tabId -> { term, fit, container, attached }
 let claudeSessions = {}; // tmuxSession -> { pct, model, sessionId, updatedAt }
@@ -619,6 +663,20 @@ function ensureTerm(tab) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.open(container);
+  // ペーストは常にmain経由で解決する: Finderでコピーしたファイル/フォルダは
+  // 既定だとファイル名テキストが貼られるため、POSIXパスに変換して貼る
+  container.addEventListener(
+    'paste',
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.mimi.readPaste().then((res) => {
+        const text = res.paths ? res.paths.map(escapeShellPath).join(' ') : res.text;
+        if (text) term.paste(text);
+      });
+    },
+    true
+  );
   term.onData((data) => window.mimi.ptyInput(tab.id, data));
   term.onResize(({ cols, rows }) => window.mimi.ptyResize(tab.id, cols, rows));
 
@@ -821,14 +879,27 @@ function renderRateLimits(rl) {
   el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
 }
 
+let claudeSessionsRecvCount = 0; // 一時デバッグ計装
 window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working, shellProcs, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
   workingMap = working ?? {};
   shellProcsMap = shellProcs ?? {};
   paneCommands = cmds ?? {};
-  renderRateLimits(rateLimits);
-  renderQuickbar();
+  // 一時デバッグ計装: 受信を最初の3回だけ記録
+  claudeSessionsRecvCount++;
+  if (claudeSessionsRecvCount <= 3) {
+    window.mimi.debugLog(
+      `claude:sessions received #${claudeSessionsRecvCount} cmds=${Object.keys(paneCommands).length} working=${Object.keys(workingMap).filter((k) => workingMap[k]).length}`
+    );
+  }
+  // 補助UI（利用制限バー・クイックバー）の例外で本体のステータス更新を道連れにしない
+  try {
+    renderRateLimits(rateLimits);
+    renderQuickbar();
+  } catch (e) {
+    window.mimi.debugLog(`aux render error: ${e.stack || e}`);
+  }
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
@@ -839,8 +910,12 @@ window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working,
     }
   }
   if (changed) save();
-  updateBadges();
-  renderStatusBar();
+  try {
+    updateBadges();
+    renderStatusBar();
+  } catch (e) {
+    window.mimi.debugLog(`updateBadges error: ${e.stack || e}`);
+  }
 });
 
 function fitActive() {
@@ -1143,7 +1218,9 @@ const HANDOFF_PROMPT =
   'コンテキストが逼迫してきたのでハンドオフしよう。' +
   'まず ~/Knowledge/sessions/ にスナップショット（今のタスク・進捗・残作業・合意事項・参照中のファイルやブランチ）を書き込んで、' +
   '書き込みが完了したら mimiterm の create_tab で新しいタブを作って、' +
-  'そのスナップショットを読むところから再開できる状態にして。このタブは最後に閉じる案内だけしてね。';
+  'そのスナップショットを読むところから再開できる状態にして。' +
+  '新タブの claude は必ずホームディレクトリで起動すること（create_tab に cwd を渡さず、command にも cd を入れない）。' +
+  'このタブは最後に閉じる案内だけしてね。';
 
 function renderStatusBar() {
   const tab = state.tabs.find((t) => t.id === state.activeTabId);
@@ -1174,7 +1251,7 @@ function flashCopyResult(label, ok) {
   copyBtn.classList.toggle('done', ok);
   copyBtn.classList.toggle('failed', !ok);
   copyResetTimer = setTimeout(() => {
-    copyBtn.textContent = '📋 回答をコピー';
+    copyBtn.textContent = '📋 文面をコピー';
     copyBtn.classList.remove('done', 'failed');
   }, 1800);
 }
@@ -1196,8 +1273,9 @@ copyBtn.addEventListener('click', async (e) => {
     flashCopyResult(`✕ ${reason}`, false);
     return;
   }
-  const what = res.source === 'block' ? `コードブロック${res.blocks > 1 ? `(末尾/${res.blocks}個中)` : ''}` : '回答全文';
-  flashCopyResult(`✓ ${what} ${res.chars}字`, true);
+  const kind = { block: 'コードブロック', quote: '引用文面', full: '回答全文' }[res.source] || '回答';
+  const which = res.candidates > 1 ? `(最長/${res.candidates}個中)` : '';
+  flashCopyResult(`✓ ${kind}${which} ${res.chars}字`, true);
 });
 
 document.getElementById('sb-handoff').addEventListener('click', () => {
