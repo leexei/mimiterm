@@ -772,6 +772,11 @@ function ensureTerm(tab) {
     // Claude Code等がマウスモードを使っていても、素のドラッグはxtermネイティブ選択にする
     // （アプリ独自の選択描画は明色文字が読めないため。アプリへのマウス送信はAlt+操作で可能）
     mouseEventsRequireAlt: true,
+    // Claude Codeの埋め込みリンク（[text](URL)）はOSC 8ハイパーリンクで届く。
+    // WebLinksAddonは平文URLしか拾わないため、OSC 8はこのハンドラで開く
+    linkHandler: {
+      activate: (event, uri) => handleLinkOpen(event, uri),
+    },
     theme: currentTheme(),
   });
   // Shift+Enter / Option+Enter は ESC CR を送る（Claude Code が改行として解釈する。
