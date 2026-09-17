@@ -14,6 +14,19 @@ function escapeShellPath(p) {
   return p.replace(/([ !"#$&'()*,:;<=>?@[\\\]^`{|}])/g, '\\$1');
 }
 
+// Claude Codeは引用ブロック（Slack/コンフル用の文面ドラフト等）を各行 ▎ 付きで
+// 描画する。選択コピーでその装飾ごと持っていくと貼り付け先で邪魔になるため、
+// 選択範囲の全行が引用装飾で揃っている場合に限りプレフィックスを剥がす。
+// （表の罫線 │ や、装飾行と本文が混在する選択はそのまま＝誤爆防止）
+function stripQuoteBars(text) {
+  const lines = text.split('\n');
+  const bar = /^\s*[▎▏▍▌](\s?)/;
+  const blank = /^\s*$/;
+  if (!lines.some((l) => bar.test(l))) return text;
+  if (!lines.every((l) => bar.test(l) || blank.test(l))) return text;
+  return lines.map((l) => l.replace(bar, '')).join('\n');
+}
+
 // Cmd+C はアクティブタブのターミナル選択を確実にコピーする。
 // xterm(canvas描画)の選択はDOM選択ではないため、既定のメニュー「コピー」は
 // フォーカスが端末の隠しtextareaに乗っている瞬間しか効かない（コピーできたり
@@ -33,7 +46,7 @@ window.addEventListener(
     if (String(window.getSelection())) return; // サイドバー等のDOM選択は既定のコピーに任せる
     const entry = terms.get(state.activeTabId);
     if (entry && entry.term.hasSelection()) {
-      const text = entry.term.getSelection();
+      const text = stripQuoteBars(entry.term.getSelection());
       if (text) {
         window.mimi.copyText(text);
         e.preventDefault();
