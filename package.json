@@ -5,6 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper",
     "rebuild": "electron-rebuild -f -w node-pty",
     "package": "electron-packager . MimiTerm --overwrite --no-asar --icon=assets/icon.icns --extend-info=build/extend-info.plist --out=dist",
     "install-app": "rsync -a --delete dist/MimiTerm-darwin-arm64/MimiTerm.app/ /Applications/MimiTerm.app/",
