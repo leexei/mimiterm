@@ -491,112 +491,6 @@ ipcMain.handle('claude:list-sessions', () => {
   return top.filter((s) => s.cwd);
 });
 
-// ---------- 今日パネル: settings.calendarCommand から今日の予定を取得 ----------
-// コマンドは「今日の予定を icalBuddy 風のテキストで出力する」任意のスクリプト。未設定ならパネル非表示
-
-function parseCalendarOutput(text) {
-  const events = [];
-  let current = null;
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/\s+$/, '');
-    const bullet = line.match(/^• (.*)$/);
-    if (bullet) {
-      if (current) events.push(current);
-      const time = bullet[1].match(/^(\d{2}:\d{2}) - (\d{2}:\d{2})$/);
-      current = time
-        ? { start: time[1], end: time[2], title: null, allDay: false }
-        : { start: null, end: null, title: bullet[1], allDay: true };
-    } else if (current && /^\s+\S/.test(line)) {
-      const body = line.trim();
-      if (!current.title && !body.startsWith('location:')) current.title = body;
-    }
-  }
-  if (current) events.push(current);
-  return events.filter((e) => e.title);
-}
-
-let calendarCache = null;
-
-function refreshCalendar() {
-  const calendarCommand = loadState().settings?.calendarCommand;
-  if (!calendarCommand) return;
-  // 直接execするとMimiTerm自身のTCC権限が必要になり、未署名アプリは再ビルドごとに権限が
-  // リセットされて破綻する。既に権限を持つtmuxサーバーのコンテキストで実行して回避する。
-  // 出力はtmux経由で受け取らずファイルに書かせる（tmuxサーバーのロケールが非UTF-8だと
-  // run-shellの出力の非ASCII文字が_に置換されてしまうため）
-  const outFile = path.join(STATE_DIR, 'calendar-out.txt');
-  execFile(
-    TMUX,
-    ['run-shell', `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${calendarCommand} > '${outFile}' 2>&1`],
-    { timeout: 30000 },
-    (err) => {
-      let output = '';
-      try {
-        output = fs.readFileSync(outFile, 'utf8');
-      } catch {
-        // 出力ファイルなし
-      }
-      // 取得失敗の切り分け用ログ（TCC権限・PATH問題など）
-      fs.writeFileSync(
-        path.join(STATE_DIR, 'calendar-debug.log'),
-        JSON.stringify(
-          {
-            at: new Date().toISOString(),
-            err: err ? String(err) : null,
-            stdoutHead: output.slice(0, 500),
-          },
-          null,
-          2
-        )
-      );
-      if (err) return;
-      calendarCache = { events: parseCalendarOutput(output), fetchedAt: Date.now() };
-      if (win && !win.isDestroyed()) win.webContents.send('calendar:update', calendarCache);
-    }
-  );
-}
-
-setInterval(refreshCalendar, 5 * 60 * 1000);
-
-// ---------- カレンダー書き込み（schedule_tab のカレンダー連携） ----------
-// 読み取り（refreshCalendar）と同じ理由でtmuxサーバーのコンテキストで実行する。
-// 実行するのは calendar-helper 互換のスクリプト（add/delete/free サブコマンドを持つもの）。
-// settings.calendarHelper が無ければ calendarCommand の末尾 "today" を外したものを使う
-function calendarHelperBase() {
-  const s = loadState().settings || {};
-  if (s.calendarHelper) return s.calendarHelper;
-  if (s.calendarCommand) return s.calendarCommand.replace(/\s+today\s*$/, '');
-  return null;
-}
-
-const shellQuote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
-
-function runCalendarHelper(args) {
-  return new Promise((resolve) => {
-    const base = calendarHelperBase();
-    if (!base) {
-      resolve({ ok: false, output: '', error: 'settings.calendarCommand が未設定です' });
-      return;
-    }
-    const outFile = path.join(STATE_DIR, `calendar-rw-${Date.now().toString(36)}.txt`);
-    const cmd = `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH ${base} ${args.map(shellQuote).join(' ')} > ${shellQuote(outFile)} 2>&1`;
-    // Calendar.app の AppleScript は遅い（uid 削除でも 20 秒前後）。短すぎると途中で見捨てた
-    // 処理が裏で完走し、結果と状態が食い違う
-    execFile(TMUX, ['run-shell', cmd], { timeout: 180000 }, (err) => {
-      let output = '';
-      try {
-        output = fs.readFileSync(outFile, 'utf8');
-        fs.unlinkSync(outFile);
-      } catch {
-        // 出力ファイルなし
-      }
-      resolve({ ok: !err, output, error: err ? String(err) : null });
-    });
-  });
-}
-
-ipcMain.handle('calendar:get', () => calendarCache);
-
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
 // rate_limits はアカウント全体の値なので、最も新しいセッションの値を採用する
 let latestRateLimits = null;
@@ -1130,13 +1024,11 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     applyTmuxSyncFeature();
-    refreshCalendar();
     startMcpServer({
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,
       browser: browserOps,
       clipboard: { write: (text) => clipboard.writeText(text) },
-      calendar: runCalendarHelper,
       // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
       mutateState: (fn) => {
         const state = loadState();
