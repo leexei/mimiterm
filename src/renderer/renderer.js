@@ -1422,22 +1422,128 @@ document.getElementById('sb-handoff').addEventListener('click', () => {
   entry.term.focus();
 });
 
-// ---------- 今日パネル（期日タブ） ----------
+// ---------- 今日パネル（カレンダー × 期日タブ） ----------
+
+let calendar = null; // { events: [{start,end,title,allDay}], fetchedAt }
+
+function nowHHMM() {
+  return new Date().toTimeString().slice(0, 5);
+}
+
+// 09:00-18:00 の勤務窓から、時刻付き予定を除いた残り空き時間(h)を出す
+function calcFreeHours(events) {
+  const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+  const winStart = Math.max(toMin('09:00'), toMin(nowHHMM()));
+  const winEnd = toMin('18:00');
+  if (winStart >= winEnd) return 0;
+  const busy = events
+    .filter((e) => !e.allDay)
+    .map((e) => [Math.max(toMin(e.start), winStart), Math.min(toMin(e.end), winEnd)])
+    .filter(([s, e]) => s < e)
+    .sort((a, b) => a[0] - b[0]);
+  let free = 0;
+  let cursor = winStart;
+  for (const [s, e] of busy) {
+    if (s > cursor) free += s - cursor;
+    cursor = Math.max(cursor, e);
+  }
+  free += Math.max(0, winEnd - cursor);
+  return Math.round((free / 60) * 10) / 10;
+}
 
 function renderTodayPanel() {
   const panel = document.getElementById('today-panel');
   const dueTabs = state.tabs.filter((t) => t.scheduledFor && t.scheduledFor <= localToday());
-  if (dueTabs.length === 0) {
+  if (!calendar && dueTabs.length === 0) {
     panel.classList.add('hidden');
     return;
   }
   panel.classList.remove('hidden');
   const d = new Date();
   const dateLabel = `${d.getMonth() + 1}/${d.getDate()}(${'日月火水木金土'[d.getDay()]})`;
-  panel.innerHTML =
-    `<div class="tp-head">📅 ${dateLabel}</div>` +
-    `<div class="tp-due">⏰ 今日が再開日のタブ ${dueTabs.length}件</div>`;
+  let html = '';
+  if (calendar) {
+    const events = calendar.events;
+    const now = nowHHMM();
+    const remaining = events.filter((e) => !e.allDay && e.end > now);
+    const ongoing = remaining.find((e) => e.start <= now);
+    const next = remaining.find((e) => e.start > now);
+    html += `<div class="tp-head">📅 ${dateLabel} ・ MTG残り${remaining.length}件 ・ 空き${calcFreeHours(events)}h</div>`;
+    if (ongoing) html += `<div class="tp-next ongoing">▶ ${ongoing.start}-${ongoing.end} ${escapeHtml(ongoing.title)}</div>`;
+    if (next) html += `<div class="tp-next">🕐 ${next.start} ${escapeHtml(next.title)}</div>`;
+    if (!ongoing && !next) html += `<div class="tp-next done">✨ 今日のMTGは終了</div>`;
+  } else {
+    html += `<div class="tp-head">📅 ${dateLabel}</div>`;
+  }
+  if (dueTabs.length > 0) {
+    html += `<div class="tp-due">⏰ 今日が再開日のタブ ${dueTabs.length}件</div>`;
+  }
+  panel.innerHTML = html;
 }
+
+// 今日パネルのホバーで全予定リストをポップオーバー表示する
+let calPreviewEl = null;
+
+function hideCalendarPreview() {
+  if (calPreviewEl) {
+    calPreviewEl.remove();
+    calPreviewEl = null;
+  }
+}
+
+function showCalendarPreview() {
+  hideCalendarPreview();
+  if (!calendar || calendar.events.length === 0) return;
+  const now = nowHHMM();
+  calPreviewEl = document.createElement('div');
+  calPreviewEl.id = 'calendar-preview';
+  const header = document.createElement('div');
+  header.className = 'preview-header';
+  header.textContent = `📅 今日の予定 全${calendar.events.length}件`;
+  const body = document.createElement('div');
+  body.className = 'preview-body cal-list';
+  for (const e of calendar.events) {
+    const row = document.createElement('div');
+    if (e.allDay) {
+      row.className = 'cal-row allday';
+      row.textContent = `◇ 終日 ${e.title}`;
+    } else {
+      const past = e.end <= now;
+      const ongoing = !past && e.start <= now;
+      row.className = 'cal-row' + (past ? ' past' : ongoing ? ' ongoing' : '');
+      row.textContent = `${ongoing ? '▶ ' : ''}${e.start}-${e.end} ${e.title}`;
+    }
+    body.appendChild(row);
+  }
+  calPreviewEl.appendChild(header);
+  calPreviewEl.appendChild(body);
+  document.body.appendChild(calPreviewEl);
+  const rect = document.getElementById('today-panel').getBoundingClientRect();
+  const top = Math.min(rect.top, window.innerHeight - calPreviewEl.offsetHeight - 12);
+  calPreviewEl.style.left = `${rect.right + 8}px`;
+  calPreviewEl.style.top = `${Math.max(8, top)}px`;
+}
+
+{
+  const panel = document.getElementById('today-panel');
+  let timer = null;
+  panel.addEventListener('mouseenter', () => {
+    timer = setTimeout(showCalendarPreview, 350);
+  });
+  panel.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    hideCalendarPreview();
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+window.mimi.onCalendarUpdate((data) => {
+  calendar = data;
+  renderTodayPanel();
+});
 
 // 通知クリックからのタブジャンプ
 window.mimi.onTabActivate((tabId) => activateTab(tabId));
@@ -1593,6 +1699,7 @@ window.mimi.onBrowserOpen((url) => openBrowserPane(url));
   renderQuickbar();
   render();
   renderBookmarks();
+  calendar = await window.mimi.getCalendar();
   renderTodayPanel();
   if (browserSettings().visible) openBrowserPane();
   if (state.activeTabId && state.tabs.some((t) => t.id === state.activeTabId)) {

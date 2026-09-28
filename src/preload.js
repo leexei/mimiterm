@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('mimi', {
   tmuxProbe: (sessionName) => ipcRenderer.invoke('tmux:probe', sessionName),
   diagnosePrepare: (opts) => ipcRenderer.invoke('diagnose:prepare', opts),
   copyText: (text) => ipcRenderer.send('clipboard:write', text),
+  getCalendar: () => ipcRenderer.invoke('calendar:get'),
+  onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
   onTabActivate: (cb) => ipcRenderer.on('tab:activate', (_e, tabId) => cb(tabId)),
   debugLog: (msg) => ipcRenderer.send('debug:log', String(msg)),
 });

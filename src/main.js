@@ -491,6 +491,43 @@ ipcMain.handle('claude:list-sessions', () => {
   return top.filter((s) => s.cwd);
 });
 
+// ---------- 今日パネル: calendar-cache.json から今日の予定を読む ----------
+// アプリ自身はカレンダーへ一切アクセスしない。予定の取得はClaudeセッション等の外部ツールが
+// 行い、~/.mimiterm/calendar-cache.json へ書く（フォーマットはREADME参照）。
+// 旧方式（tmux run-shell + gcloud）は認証失効と、失敗ジョブ起因のtmux 3.7c segvで廃止した。
+
+const CALENDAR_CACHE = path.join(STATE_DIR, 'calendar-cache.json');
+let calendarCache = null;
+
+function refreshCalendarFromCache() {
+  let next = null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(CALENDAR_CACHE, 'utf8'));
+    // 日付が今日でないキャッシュは古い情報を出すより非表示の方がまし
+    if (raw && raw.date === new Date().toLocaleDateString('sv-SE') && Array.isArray(raw.events)) {
+      const events = raw.events
+        .map((e) => ({
+          start: e.start || null,
+          end: e.end || null,
+          title: String(e.title || '').trim(),
+          allDay: !!e.allDay || !e.start,
+        }))
+        .filter((e) => e.title);
+      next = { events, fetchedAt: Date.parse(raw.updatedAt) || Date.now() };
+    }
+  } catch {
+    // ファイル無し・壊れたJSONはパネルのカレンダー部を非表示にするだけ
+  }
+  if (JSON.stringify(next) !== JSON.stringify(calendarCache)) {
+    calendarCache = next;
+    if (win && !win.isDestroyed()) win.webContents.send('calendar:update', calendarCache);
+  }
+}
+
+setInterval(refreshCalendarFromCache, 60 * 1000);
+
+ipcMain.handle('calendar:get', () => calendarCache);
+
 // statusline-tap.sh が書く Claude セッション情報を集約してレンダラーへ push する
 // rate_limits はアカウント全体の値なので、最も新しいセッションの値を採用する
 let latestRateLimits = null;
@@ -1024,6 +1061,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     applyTmuxSyncFeature();
+    refreshCalendarFromCache();
     startMcpServer({
       getState: loadState,
       getClaudeSessions: collectClaudeSessions,

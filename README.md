@@ -13,7 +13,7 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **アカウント状態**: サイドバー下部に5h/7日レート制限バー（リセットまでの残り時間つき）
 - **通知**: タブが「考え中→応答待ち」に変わった時と、コンテキスト使用率が70%を超えた時にmacOS通知（クリックでそのタブへジャンプ）。Dockアイコンに応答待ちタブ数のバッジを表示。フォーカス中のタブの応答待ち通知は抑制される
 - **タブの自動整理**（任意・`setup.sh autoschedule` で有効化）: Claude Code の Stop hook で応答文から「別日にやる」意図を検出し、日付が読み取れれば再開予定日を設定してその日付グループへ自動移動、曖昧なら 🤔 バッジのみ付与。判定は正規表現のみで追加のAI呼び出しは行わない
-- **今日パネル**: 再開予定日（`schedule_tab`）が来たタブの件数を表示（該当タブが無ければ非表示）
+- **今日パネル**: 今日の予定と空き時間、再開予定日（`schedule_tab`）が来たタブを表示。予定は `~/.mimiterm/calendar-cache.json` から読む（後述。アプリ自身はカレンダーへアクセスしない）。空き時間は 09:00〜18:00 の窓（現在時刻以降）を基準に算出（現状は固定値）
 - **クイックコマンドバー**: ワンクリックでコマンド注入。Claude実行中/シェルでセット自動切替
 - **セッションインポート**: 過去のClaude Codeセッションを選んで `claude --resume` 付きタブを生成
 - **埋め込みブラウザ**: SSOセッション永続のブラウザペイン。選択テキストをClaude入力欄へ引用注入
@@ -67,6 +67,25 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | `quickCommandsByMode` | object | 未設定（組込みセットを使用） | クイックコマンド（UI上で編集可能なので直接編集は不要） |
 | `browser.bookmarks` | array | 未設定（空として扱う） | ブックマーク（UI/MCPで編集可能） |
 
+### 今日パネルの予定データ（`~/.mimiterm/calendar-cache.json`）
+
+アプリはカレンダーAPIへ直接アクセスしない。予定の取得は外部ツール（Claude セッションの Google Calendar 連携、cron スクリプト等）が行い、以下の形式でこのファイルへ書く。アプリは1分毎に読み直し、`date` が今日でないキャッシュは無視する（ファイルが無ければパネルのカレンダー部は非表示）。
+
+```json
+{
+  "date": "2026-09-28",
+  "updatedAt": "2026-09-28T09:00:00+09:00",
+  "events": [
+    { "start": "10:00", "end": "10:30", "title": "朝会" },
+    { "title": "終日の予定", "allDay": true }
+  ]
+}
+```
+
+- `date`: このキャッシュが表す日（`YYYY-MM-DD`、ローカルタイム）
+- `events[].start` / `end`: `HH:MM`（2桁ゼロ埋め）。`start` の無いイベントは終日扱い
+- 終日予定はパネルの件数・空き時間計算に含まれない（ホバーの一覧には出る）
+
 ## MCPツール一覧（Claudeから使える操作）
 
 - タブ系: `list_tabs`（dueToday/contextPct等付き） / `create_tab`（起動コマンド指定可・ハンドオフ用） / `rename_tab` / `create_group` / `move_tab_to_group` / `collapse_group` / `set_tab_badge` / `schedule_tab` / `set_background`
@@ -96,7 +115,7 @@ npm run deploy       # パッケージ + /Applications へ反映（MimiTerm.app�
 |------|------|
 | rebuildで `'functional' file not found` | CLTのlibc++破損。`setup.sh build` が自動でSDK直指定リトライする |
 | タブのコンテキスト%が出ない | statuslineステップ実施済みか確認。タブ内でclaudeが1回以上応答してから表示される |
-| 今日パネルが出ない | 再開予定日タブが無い時は非表示（仕様） |
+| 今日パネルにカレンダーが出ない | `~/.mimiterm/calendar-cache.json` が無い・`date` が今日でない・JSONが壊れているのいずれか。予定も再開予定日タブも無ければパネル自体が非表示（仕様） |
 | ブラウザでSSOが弾かれる | Chrome相当UAを名乗る対策済み。デバイス準拠ポリシー必須の環境では不可 |
 | タブを閉じてもtmuxセッションが残った | `tmux kill-session -t <mimi-...>` で手動削除 |
 | 新規タブが真っ白（何も描画されない） | アプリ実行中にdeployした際のプロセス世代混在が典型原因。MimiTermを完全終了（Cmd+Q）→再起動 |
