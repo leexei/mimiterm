@@ -5,6 +5,7 @@ const os = require('os');
 const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { startMcpServer } = require('./mcp-server');
+const { autoTabName } = require('./tab-name');
 
 // macOSのfdソフトリミット既定は256で、タブ数×pty + Chromium内部だけでほぼ使い切る。
 // 上限に達すると execFile(tmux/ps) が EMFILE で失敗し、稼働判定（スピナー・通知・Dockバッジ）が沈黙する
@@ -458,6 +459,7 @@ ipcMain.handle('claude:list-sessions', () => {
   }
   found.sort((a, b) => b.mtime - a.mtime);
   const top = found.slice(0, 30);
+  const { settings } = loadState();
   for (const s of top) {
     try {
       const fd = fs.openSync(s.file, 'r');
@@ -484,7 +486,7 @@ ipcMain.handle('claude:list-sessions', () => {
         }
         if (s.cwd && s.title) break;
       }
-      s.title = (s.title || firstUser || s.sessionId).slice(0, 60);
+      s.title = autoTabName(s.title || firstUser || s.sessionId, settings).slice(0, 60);
     } catch {
       s.title = s.sessionId;
     }

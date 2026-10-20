@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { autoTabName } = require('./tab-name');
 
 const CONFIG_FILE = path.join(os.homedir(), '.mimiterm', 'mcp.json');
 const DEFAULT_PORT = 48237;
@@ -117,7 +118,7 @@ const TOOLS = [
         }
         const tab = {
           id: uid('t'),
-          name: args.name,
+          name: autoTabName(args.name, state.settings),
           groupId: group.id,
           tmuxSession: uid('mimi'),
           // レンダラーがこれを見てtmuxセッションを起動し、コマンドを流し込む
@@ -146,7 +147,7 @@ const TOOLS = [
       ctx.mutateState((state) => {
         const tab = resolveTab(state, args.tab);
         if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
-        tab.name = args.name;
+        tab.name = autoTabName(args.name, state.settings);
         return { ok: true, tab: { id: tab.id, name: tab.name } };
       }),
   },

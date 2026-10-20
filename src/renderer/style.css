@@ -759,10 +759,16 @@ html, body, #app {
   display: none !important;
 }
 
-#browser-divider {
+#browser-divider,
+#sidebar-divider {
   width: 4px;
+  flex-shrink: 0;
   cursor: col-resize;
   background: var(--bg-hover);
+}
+
+#sidebar-divider {
+  background: transparent;
 }
 
 /* ディバイダードラッグ中: webviewと本体UIへのマウス干渉を止める */
@@ -776,7 +782,8 @@ body.resizing #terminals {
   pointer-events: none;
 }
 
-#browser-divider:hover {
+#browser-divider:hover,
+#sidebar-divider:hover {
   background: var(--accent);
 }
 

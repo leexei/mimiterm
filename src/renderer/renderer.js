@@ -746,7 +746,54 @@ function applySettings() {
     entry.term.options.theme = theme;
     syncRenderer(entry);
   }
+  applySidebarWidth(state.settings?.sidebarWidth);
 }
+
+// ---------- 左サイドバーの幅 ----------
+
+const sidebarEl = document.getElementById('sidebar');
+const sidebarDivider = document.getElementById('sidebar-divider');
+const SIDEBAR_DEFAULT_WIDTH = 240;
+const SIDEBAR_MIN_WIDTH = 160;
+
+function clampSidebarWidth(width) {
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.min(640, window.innerWidth * 0.5));
+  return Math.round(Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, width)));
+}
+
+function applySidebarWidth(width) {
+  const w = clampSidebarWidth(width || SIDEBAR_DEFAULT_WIDTH);
+  sidebarEl.style.width = `${w}px`;
+  sidebarEl.style.minWidth = `${w}px`;
+}
+
+function saveSidebarWidth(width) {
+  state.settings = state.settings || {};
+  if (width) state.settings.sidebarWidth = width;
+  else delete state.settings.sidebarWidth;
+  save();
+}
+
+sidebarDivider.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  document.body.classList.add('resizing');
+  const onMove = (ev) => applySidebarWidth(ev.clientX);
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('resizing');
+    saveSidebarWidth(sidebarEl.offsetWidth);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+
+sidebarDivider.addEventListener('dblclick', () => {
+  applySidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  saveSidebarWidth(null);
+});
+
+window.addEventListener('resize', () => applySidebarWidth(state.settings?.sidebarWidth));
 
 // ターミナル出力中のリンクを開く。通常クリック=組み込みブラウザペイン、
 // Cmd+クリック=OS既定ブラウザ。ファイルパス等のハンドラ追加はここに集約する

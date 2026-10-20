@@ -66,6 +66,8 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | `background` / `backgroundOpacity` | string / number | 未設定 / 0.25 | ターミナル背景画像とその見え具合。MCPの `set_background` で設定される |
 | `quickCommandsByMode` | object | 未設定（組込みセットを使用） | クイックコマンド（UI上で編集可能なので直接編集は不要） |
 | `browser.bookmarks` | array | 未設定（空として扱う） | ブックマーク（UI/MCPで編集可能） |
+| `sidebarWidth` | number | 未設定（240px） | 左サイドバーの幅。サイドバー右端の境界をドラッグで変更、ダブルクリックで既定幅に戻る（UI操作で保存されるので直接編集は不要） |
+| `autoNameStripPrefixes` | string[] | 未設定（何も外さない） | 自動で付くタブ名（セッション取り込み・MCPの `create_tab` / `rename_tab`）から、番号の直前にあるこれらのプレフィックスを外す。例: `["PROJ-"]` で `PROJ-123 調査` → `123 調査`。手入力のリネームには効かない |
 
 ### 今日パネルの予定データ（`~/.mimiterm/calendar-cache.json`）
 
