@@ -20,15 +20,17 @@ const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/
 const TMUX = TMUX_CANDIDATES.find((p) => fs.existsSync(p)) || 'tmux';
 
 // 同期出力(DECSET 2026)を外側ターミナル(=MimiTerm)へ通すようtmuxへ宣言する。
-// レンダラー側で2026をパースしてバッファ描画するため、Claude Code等の再描画がちらつかない
+// レンダラー側で2026をパースしてバッファ描画するため、Claude Code等の再描画がちらつかない。
+// hyperlinksを宣言しないとtmuxはOSC 8を剥がして文字だけ送るため、埋め込みリンクがクリックできない
 const TMUX_CONF = path.join(STATE_DIR, 'tmux.conf');
+const TMUX_TERMINAL_FEATURES = 'xterm*:sync:hyperlinks';
 function ensureTmuxConf() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(TMUX_CONF, "set -s terminal-features 'xterm*:sync'\n");
+  fs.writeFileSync(TMUX_CONF, `set -s terminal-features '${TMUX_TERMINAL_FEATURES}'\n`);
 }
 function applyTmuxSyncFeature() {
   // 既に起動中のtmuxサーバーにも反映（サーバー未起動ならエラーになるだけなので無視）
-  execFile(TMUX, ['set', '-s', 'terminal-features', 'xterm*:sync'], () => {});
+  execFile(TMUX, ['set', '-s', 'terminal-features', TMUX_TERMINAL_FEATURES], () => {});
 }
 
 const ptys = new Map(); // tabId -> IPty
