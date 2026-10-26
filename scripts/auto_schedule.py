@@ -10,7 +10,37 @@ try:
 except Exception:
     sys.exit(0)
 
+def last_assistant_from_transcript(path):
+    """Stop hook入力に last_assistant_message が無い場合のフォールバック。
+    transcript(JSONL) の末尾から最後のアシスタント応答のテキストを拾う。"""
+    if not path:
+        return ''
+    try:
+        lines = open(path, encoding='utf-8').read().splitlines()
+    except Exception:
+        return ''
+    for line in reversed(lines):
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        m = obj.get('message') or {}
+        if obj.get('type') == 'assistant' or m.get('role') == 'assistant':
+            content = m.get('content') or obj.get('content') or []
+            if isinstance(content, str):
+                return content
+            texts = [c.get('text', '') for c in content
+                     if isinstance(c, dict) and c.get('type') == 'text']
+            if texts:
+                return '\n'.join(texts)
+            # テキストブロックなし（tool_useのみ等）→ さらに遡る
+            continue
+    return ''
+
+
 msg = payload.get('last_assistant_message') or ''
+if not msg:
+    msg = last_assistant_from_transcript(payload.get('transcript_path'))
 if not msg:
     sys.exit(0)
 
