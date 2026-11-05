@@ -95,6 +95,7 @@ function render() {
   renderEmptyHint();
   updateWindowTitle();
   renderTodayPanel();
+  renderPinnedTabButton();
 }
 
 function renderGroup(group) {
@@ -694,6 +695,63 @@ document.getElementById('diagnose-tab').addEventListener('click', async () => {
   render();
   await autoTrustCwd();
   await activateTab(dtab.id, `claude '🆘MimiTermのタブ復旧依頼だよ。${file} を読んで、書かれているタブを調査・復旧して。'`);
+});
+
+// 📌常設タブボタン: settings.pinnedTab = { name, command, group?, label? } を設定すると
+// サイドバーに表示される。クリックで同名タブへ切り替え（無ければ作成して command を実行）。
+// 二重作成はしない。タブはあるがコマンドが終了してシェルに戻っている場合は、🚑と同じ流儀で再実行を提案する
+const pinnedTabButton = document.getElementById('pinned-tab');
+
+function renderPinnedTabButton() {
+  const pin = state.settings?.pinnedTab;
+  if (pin?.name && pin?.command) {
+    pinnedTabButton.textContent = pin.label || `📌 ${pin.name}`;
+    pinnedTabButton.classList.remove('hidden');
+  } else {
+    pinnedTabButton.classList.add('hidden');
+  }
+}
+
+pinnedTabButton.addEventListener('click', async () => {
+  const pin = state.settings?.pinnedTab;
+  if (!pin?.name || !pin?.command) return;
+  const existing = state.tabs.find((t) => t.name === pin.name);
+  if (existing) {
+    await activateTab(existing.id);
+    showToast(`「${pin.name}」タブに切り替えたよ`);
+    // attachが落ち着いてから前面プロセスを確認。コマンドが動いていなければ再実行を提案
+    setTimeout(async () => {
+      const probe = await window.mimi.tmuxProbe(existing.tmuxSession);
+      if (probe.exists && PLAIN_SHELLS.has(probe.command)) {
+        showToast(`「${pin.name}」タブはあるけど、コマンドが動いてないみたい`, {
+          label: `▶ ${pin.command}`,
+          run: () => window.mimi.ptyInput(existing.id, `${pin.command}\r`),
+        });
+      }
+    }, 800);
+    return;
+  }
+  let group = null;
+  if (pin.group) {
+    group = state.groups.find((g) => g.name === pin.group);
+    if (!group) {
+      group = { id: uid('g'), name: pin.group, collapsed: false };
+      state.groups.push(group);
+    }
+    group.collapsed = false;
+  }
+  // cwdは渡さない＝ホームディレクトリ起動（リポジトリ配下のsandbox巻き込み防止）
+  const tab = {
+    id: uid('t'),
+    name: pin.name,
+    groupId: group ? group.id : currentGroupId(),
+    tmuxSession: uid('mimi'),
+  };
+  state.tabs.push(tab);
+  save();
+  render();
+  await autoTrustCwd();
+  await activateTab(tab.id, pin.command);
 });
 
 // 背景画像設定（MCPのset_backgroundから変更される）

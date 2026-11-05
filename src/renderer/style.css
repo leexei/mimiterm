@@ -310,6 +310,7 @@ html, body, #app {
 }
 
 #add-group,
+#pinned-tab,
 #import-session,
 #recover-tab,
 #diagnose-tab {
@@ -324,6 +325,7 @@ html, body, #app {
 }
 
 #add-group:hover,
+#pinned-tab:hover,
 #import-session:hover,
 #recover-tab:hover,
 #diagnose-tab:hover {
