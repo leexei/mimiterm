@@ -856,6 +856,16 @@ window.addEventListener('resize', () => applySidebarWidth(state.settings?.sideba
 // ターミナル出力中のリンクを開く。通常クリック=組み込みブラウザペイン、
 // Cmd+クリック=OS既定ブラウザ。ファイルパス等のハンドラ追加はここに集約する
 function handleLinkOpen(event, uri) {
+  // mimiterm://tab/<tabId> はタブ切り替えリンク（各タブのClaudeがOSC 8で貼る）
+  if (uri.startsWith('mimiterm:')) {
+    const m = uri.match(/^mimiterm:\/\/tab\/([A-Za-z0-9-]+)\/?$/);
+    const tab = m && state.tabs.find((t) => t.id === m[1]);
+    if (tab) activateTab(tab.id);
+    else showToast('リンク先のタブが見つからないよ');
+    return;
+  }
+  // allowNonHttpProtocols で届く他スキーム（file:等）は開かない（OSC 8は出力側が自由に書けるため）
+  if (!/^https?:/i.test(uri)) return;
   if (event.metaKey) window.mimi.openExternal(uri);
   else openBrowserPane(uri);
 }
@@ -881,6 +891,8 @@ function ensureTerm(tab) {
     // WebLinksAddonは平文URLしか拾わないため、OSC 8はこのハンドラで開く
     linkHandler: {
       activate: (event, uri) => handleLinkOpen(event, uri),
+      // 既定はhttp(s)のみ。mimiterm://タブリンクを通す（スキーム検査はhandleLinkOpen側）
+      allowNonHttpProtocols: true,
     },
     theme: currentTheme(),
   });

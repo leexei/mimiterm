@@ -54,6 +54,7 @@ function tabSummary(state, tab, claudeSessions) {
     group: group ? group.name : null,
     groupId: tab.groupId,
     tmuxSession: tab.tmuxSession,
+    link: `mimiterm://tab/${tab.id}`,
     active: state.activeTabId === tab.id,
     claudeSessionId: tab.claudeSessionId ?? info?.sessionId ?? null,
     contextPct: info?.pct ?? null,
@@ -71,7 +72,8 @@ const TOOLS = [
   {
     name: 'list_tabs',
     description:
-      'MimiTerm の全グループと全タブの一覧を返す。各タブの Claude コンテキスト使用率(contextPct)・セッションID・再開予定日(scheduledFor)・バッジも含む。タブ棚卸しはまずこれを呼ぶ。',
+      'MimiTerm の全グループと全タブの一覧を返す。各タブの Claude コンテキスト使用率(contextPct)・セッションID・再開予定日(scheduledFor)・バッジも含む。タブ棚卸しはまずこれを呼ぶ。' +
+      "link はクリックでそのタブへ切り替わるリンク。ターミナルへは printf '\\e]8;;<link>\\e\\\\表示テキスト\\e]8;;\\e\\\\\\n' のように OSC 8 で貼る。",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (args, ctx) => {
       const state = ctx.getState();
