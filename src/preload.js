@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('mimi', {
   onBrowserOpen: (cb) => ipcRenderer.on('browser:open', (_e, url) => cb(url)),
   copyLastMessage: (opts) => ipcRenderer.invoke('clipboard:copy-last', opts),
   readPaste: () => ipcRenderer.invoke('clipboard:read-paste'),
-  tmuxProbe: (sessionName) => ipcRenderer.invoke('tmux:probe', sessionName),
+  tmuxProbe: (sessionName, remoteHost) => ipcRenderer.invoke('tmux:probe', sessionName, remoteHost),
   listRemoteSessions: (host) => ipcRenderer.invoke('remote:list-sessions', host),
   diagnosePrepare: (opts) => ipcRenderer.invoke('diagnose:prepare', opts),
   copyText: (text) => ipcRenderer.send('clipboard:write', text),

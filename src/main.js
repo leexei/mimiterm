@@ -42,6 +42,7 @@ const SSH = '/usr/bin/ssh';
 const REMOTE_PATH_PREFIX = 'PATH=/opt/homebrew/bin:/usr/local/bin:$PATH';
 const SAFE_HOST = /^[A-Za-z0-9._@:-]+$/; // user@host / ssh_config の Host 名。オプションとして解釈されないよう先頭の - は別で弾く
 const SAFE_SESSION = /^[A-Za-z0-9._-]+$/;
+const SSH_BATCH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5'];
 
 function isSafeHost(host) {
   return typeof host === 'string' && SAFE_HOST.test(host) && !host.startsWith('-');
@@ -51,26 +52,32 @@ function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
+// リモートのログインシェルが sh 系でなくても動くよう、sh -c で包む
 function remoteTmuxCommand(args) {
-  return `${REMOTE_PATH_PREFIX} tmux ${args.map(shellQuote).join(' ')}`;
+  return `sh -c ${shellQuote(`${REMOTE_PATH_PREFIX} tmux ${args.map(shellQuote).join(' ')}`)}`;
 }
 
-// tmux セッション名から、そのタブのリモート先を引く（ローカルのタブなら null）
-function remoteHostOf(sessionName) {
-  const tab = loadState().tabs.find((t) => t.tmuxSession === sessionName && t.remote);
-  return tab && isSafeHost(tab.remote.host) ? tab.remote.host : null;
+// ssh 越しに tmux を叩く。'--' で宛先がオプションとして読まれないようにする
+function sshTmux(host, args, cb) {
+  execFile(SSH, [...SSH_BATCH_OPTS, '--', host, remoteTmuxCommand(args)], { timeout: 10000 }, cb);
 }
 
-// ローカルの tmux と同じ使い勝手で、リモートなら ssh 越しに tmux を叩く
-function tmuxExec(sessionName, args, cb) {
-  const host = remoteHostOf(sessionName);
-  if (!host) return execFile(TMUX, args, cb);
-  execFile(
-    SSH,
-    ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', host, remoteTmuxCommand(args)],
-    { timeout: 10000 },
-    cb
-  );
+// ssh の失敗を、画面に出せる短い文に
+function sshErrorText(err, stderr) {
+  if (err.killed) return '接続がタイムアウトしたよ';
+  const msg = String(stderr || '').trim();
+  return msg.split('\n').pop() || 'ssh に失敗したよ';
+}
+
+// tmux の操作先。remoteHost はタブの remote.host をレンダラーから受け取る（state.json を引かない）。
+// remoteHost が渡されたのに不正なら、ローカルへ落とさず失敗させる（同名のローカルセッションを触らない）
+function tmuxExec(remoteHost, args, cb) {
+  if (remoteHost === undefined || remoteHost === null) return execFile(TMUX, args, cb);
+  if (!isSafeHost(remoteHost)) {
+    cb(new Error('invalid remote host'), '', '');
+    return;
+  }
+  sshTmux(remoteHost, args, cb);
 }
 
 // 設定済みのリモート先にある tmux セッションの一覧
@@ -81,16 +88,11 @@ ipcMain.handle('remote:list-sessions', (_e, host) => {
       return;
     }
     const fmt = '#{session_name}\t#{session_activity}\t#{session_attached}\t#{pane_current_command}';
-    execFile(
-      SSH,
-      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', host, remoteTmuxCommand(['list-sessions', '-F', fmt])],
-      { timeout: 10000 },
-      (err, stdout, stderr) => {
+    sshTmux(host, ['list-sessions', '-F', fmt], (err, stdout, stderr) => {
         if (err) {
-          const msg = String(stderr || err.message).trim();
           // tmux サーバーが動いていないだけなら空の一覧
-          if (/no server running|error connecting to/.test(msg)) resolve({ ok: true, sessions: [] });
-          else resolve({ ok: false, error: msg.split('\n').pop() || 'ssh に失敗したよ' });
+          if (/no server running|error connecting to/.test(String(stderr))) resolve({ ok: true, sessions: [] });
+          else resolve({ ok: false, error: sshErrorText(err, stderr) });
           return;
         }
         const sessions = String(stdout)
@@ -103,8 +105,7 @@ ipcMain.handle('remote:list-sessions', (_e, host) => {
           .filter((s) => SAFE_SESSION.test(s.name))
           .sort((a, b) => b.activity - a.activity);
         resolve({ ok: true, sessions });
-      }
-    );
+    });
   });
 });
 
@@ -221,6 +222,7 @@ function spawnRemotePty(host, tmuxSession, cols, rows) {
       '-o', 'ConnectTimeout=10',
       '-o', 'ServerAliveInterval=15',
       '-o', 'ServerAliveCountMax=3',
+      '--',
       host,
       remoteTmuxCommand(['new-session', '-A', '-s', tmuxSession]),
     ],
@@ -234,12 +236,12 @@ function spawnRemotePty(host, tmuxSession, cols, rows) {
   );
 }
 
-ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand }) => {
+ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand, remoteHost }) => {
   if (ptys.has(tabId)) return 'exists';
-  const remoteTab = loadState().tabs.find((t) => t.id === tabId && t.remote);
-  if (remoteTab) {
-    if (!isSafeHost(remoteTab.remote.host) || !SAFE_SESSION.test(tmuxSession)) return 'invalid';
-    const p = spawnRemotePty(remoteTab.remote.host, tmuxSession, cols, rows);
+  // リモートタブはレンダラーが remote.host を渡す。不正ならローカルに落とさず断る
+  if (remoteHost !== undefined && remoteHost !== null) {
+    if (!isSafeHost(remoteHost) || !SAFE_SESSION.test(tmuxSession)) return 'invalid';
+    const p = spawnRemotePty(remoteHost, tmuxSession, cols, rows);
     ptys.set(tabId, p);
     wirePty(tabId, p);
     return 'created';
@@ -302,19 +304,26 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
 });
 
 // タブ復旧トリアージ用: セッションの有無と前面プロセス名を1回で返す
-ipcMain.handle('tmux:probe', (_e, sessionName) => {
+// リモートでは、セッションがないのか ssh がつながらないのかを分ける（exists: null は「わからない」）
+ipcMain.handle('tmux:probe', (_e, sessionName, remoteHost) => {
   return new Promise((resolve) => {
-    tmuxExec(sessionName, ['display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
-      if (err) resolve({ exists: false, command: null });
-      else resolve({ exists: true, command: String(stdout).trim() });
+    // display-message は存在しないセッションでも成功して空を返すので、list-panes の完全一致（=名前）で見る
+    tmuxExec(remoteHost, ['list-panes', '-t', `=${sessionName}`, '-F', '#{pane_active}\t#{pane_current_command}'], (err, stdout, stderr) => {
+      if (!err) {
+        const lines = String(stdout).split('\n').filter(Boolean);
+        const active = lines.find((l) => l.startsWith('1\t')) || lines[0] || '';
+        resolve({ exists: true, command: active.split('\t')[1] || '' });
+      } else if (!remoteHost || /can't find|no server running|error connecting to/.test(String(stderr)))
+        resolve({ exists: false, command: null });
+      else resolve({ exists: null, command: null, error: sshErrorText(err, stderr) });
     });
   });
 });
 
 // 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
-ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
+ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId, remoteHost }) => {
   return new Promise((resolve) => {
-    tmuxExec(tmuxSession, ['capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
+    tmuxExec(remoteHost, ['capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
       const capture = err ? `(capture-pane 失敗: ${err.message})` : String(stdout).replace(/\s+$/, '');
       const file = path.join(STATE_DIR, 'diagnose', `${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -328,6 +337,7 @@ ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId 
           '',
           `- 対象タブ名: ${tabName}`,
           `- tmuxセッション: ${tmuxSession}`,
+          ...(remoteHost ? [`- リモート: ${remoteHost} の tmux（操作は \`ssh ${remoteHost} tmux ...\` で。ローカルの同名セッションとは別物）`] : []),
           `- ClaudeセッションID: ${claudeSessionId || '不明'}`,
           `- 発生時刻: ${new Date().toLocaleString('ja-JP')}`,
           '',
@@ -354,7 +364,7 @@ ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId 
 // ホバープレビュー用: セッションの現在画面をテキストで取得（LLM不要・低コスト）
 ipcMain.handle('tmux:capture', (_e, sessionName) => {
   return new Promise((resolve) => {
-    tmuxExec(sessionName, ['capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
+    execFile(TMUX, ['capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
       if (err) {
         resolve(null);
         return;
@@ -365,8 +375,6 @@ ipcMain.handle('tmux:capture', (_e, sessionName) => {
 });
 
 ipcMain.on('tmux:kill-session', (_e, name) => {
-  // リモートのセッションは相手側の持ち物（Discord ブリッジ等）なので、タブを閉じても終了させない
-  if (remoteHostOf(name)) return;
   execFile(TMUX, ['kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
@@ -1090,7 +1098,7 @@ setInterval(async () => {
       // 直前まで数tick連続で作業中だった場合のみ「応答待ちになった」とみなす（チラつき防止）
       if (notifEnabled && streak >= 3 && !notifiedWaiting.has(sess)) {
         notifiedWaiting.add(sess);
-        const tab = state.tabs.find((t) => t.tmuxSession === sess);
+        const tab = state.tabs.find((t) => !t.remote && t.tmuxSession === sess);
         const watching = win && win.isFocused() && state.activeTabId === tab?.id;
         if (tab && !watching) notifyTab(tab, '応答待ちになったよ 🐾');
       }
@@ -1098,7 +1106,7 @@ setInterval(async () => {
     if (notifEnabled && isClaudePane && info?.pct != null) {
       if (info.pct >= 70 && !ctxAlerted.has(sess)) {
         ctxAlerted.add(sess);
-        const tab = state.tabs.find((t) => t.tmuxSession === sess);
+        const tab = state.tabs.find((t) => !t.remote && t.tmuxSession === sess);
         if (tab) notifyTab(tab, `コンテキスト ${Math.round(info.pct)}% 🔥 そろそろ /compact か引き継ぎを`);
       } else if (info.pct < 60) {
         ctxAlerted.delete(sess);
@@ -1109,6 +1117,7 @@ setInterval(async () => {
     app.dock.setBadge(waitingCount > 0 ? String(waitingCount) : '');
     // Dockアイコン右クリックで応答待ちタブの一覧→選択でジャンプ
     const waitingTabs = state.tabs.filter((t) => {
+      if (t.remote) return false; // 稼働判定はローカルの tmux だけ
       const info = sessions[t.tmuxSession];
       const cmd = paneCommands[t.tmuxSession];
       return (

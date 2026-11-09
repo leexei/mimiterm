@@ -70,7 +70,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | `sidebarWidth` | number | 未設定（240px） | 左サイドバーの幅。サイドバー右端の境界をドラッグで変更、ダブルクリックで既定幅に戻る（UI操作で保存されるので直接編集は不要） |
 | `autoNameStripPrefixes` | string[] | 未設定（何も外さない） | 自動で付くタブ名（セッション取り込み・MCPの `create_tab` / `rename_tab`）から、番号の直前にあるこれらのプレフィックスを外す。例: `["PROJ-"]` で `PROJ-123 調査` → `123 調査`。手入力のリネームには効かない |
 | `pinnedTab` | object | 未設定（ボタン非表示） | よく使うタブへのワンクリック切り替えボタンをサイドバーに出す。`{"name": "タブ名", "command": "実行コマンド", "group": "グループ名(任意)", "label": "ボタン表示(任意)"}`。同名タブが無ければ作成してホームディレクトリで `command` を実行、あれば切り替えるだけ（コマンドが終了していれば再実行を提案） |
-| `remoteHosts` | array | 未設定（ボタン非表示） | ssh 先の tmux セッションをタブで開く「🌐 リモートのセッション」ボタンを出す。`[{"name": "server", "host": "user@server.example"}]`。`host` は ssh に渡す宛先（`~/.ssh/config` の Host 名も可）。**鍵認証が通ること**が前提（一覧取得は BatchMode）。リモート側にも tmux が必要。リモートタブを閉じても相手の tmux セッションは終了しない。応答待ちの通知・コンテキスト表示はローカルのタブだけ |
+| `remoteHosts` | array | 未設定（ボタン非表示） | ssh 先の tmux セッションをタブで開く「🌐 リモートのセッション」ボタンを出す。`[{"name": "server", "host": "user@server.example"}]`。`host` は ssh に渡す宛先（`~/.ssh/config` の Host 名も可）。**鍵認証が通ること**が前提（一覧取得は BatchMode）。リモート側にも tmux が必要。リモートタブを閉じても相手の tmux セッションは終了しない。応答待ちの通知・コンテキスト表示・ホバープレビューはローカルのタブだけ。一覧に出るのは英数字と `._-` だけの名前のセッション。リモートでは `sh -c` で `/opt/homebrew/bin` と `/usr/local/bin` を PATH の先頭に足して tmux を探す |
 
 ### 今日パネルの予定データ（`~/.mimiterm/calendar-cache.json`）
 
