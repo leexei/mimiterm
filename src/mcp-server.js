@@ -54,6 +54,7 @@ function tabSummary(state, tab, claudeSessions) {
     group: group ? group.name : null,
     groupId: tab.groupId,
     tmuxSession: tab.tmuxSession,
+    remoteHost: tab.remote?.host ?? null, // リモートタブなら ssh 先（tmux 操作は ssh 越しに）
     link: `mimiterm://tab/${tab.id}`,
     active: state.activeTabId === tab.id,
     claudeSessionId: tab.claudeSessionId ?? info?.sessionId ?? null,

@@ -547,6 +547,14 @@ async function createTab(groupId) {
 }
 
 function closeTab(tab) {
+  if (tab.remote) {
+    // リモートのセッションは相手側の持ち物なので、タブを閉じても終了させない（detach だけ）
+    if (!confirm(`タブ「${tab.name}」を閉じます（${tab.remote.host} の tmux セッションは残ります）。よろしいですか？`)) return;
+    removeTab(tab, false);
+    save();
+    render();
+    return;
+  }
   if (!confirm(`タブ「${tab.name}」を閉じて tmux セッションも終了します。よろしいですか？`)) return;
   removeTab(tab, true);
   save();
@@ -791,6 +799,7 @@ function syncRenderer(entry) {
 }
 
 function applySettings() {
+  applyRemoteButton();
   const bg = state.settings?.background;
   if (bg) {
     terminalsEl.style.backgroundImage = `url('file://${bg}')`;
@@ -1268,6 +1277,97 @@ async function importSession(s) {
 }
 
 document.getElementById('import-session').addEventListener('click', openImportModal);
+
+// ---------- リモートのセッション ----------
+// settings.remoteHosts = [{ name: "mini", host: "user@100.x.x.x" }] を設定すると、
+// その ssh 先の tmux セッションを一覧から選んでタブで開ける（例: Discord ブリッジが mini で起動した claude）
+function remoteHosts() {
+  const list = state.settings?.remoteHosts;
+  return Array.isArray(list) ? list.filter((h) => h && typeof h.host === 'string' && h.host) : [];
+}
+
+function applyRemoteButton() {
+  document.getElementById('open-remote').classList.toggle('hidden', remoteHosts().length === 0);
+}
+
+async function openRemoteModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'mimi-modal';
+  modal.innerHTML = '<div class="modal-title">リモートのセッションを開く 🌐</div>';
+  const listEl = document.createElement('div');
+  listEl.className = 'modal-list';
+  listEl.innerHTML = '<div class="modal-empty">接続して一覧を取ってるよ…</div>';
+  modal.appendChild(listEl);
+  overlay.appendChild(modal);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', esc);
+  };
+  function esc(e) {
+    if (e.key === 'Escape') close();
+  }
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', esc);
+  document.body.appendChild(overlay);
+
+  const hosts = remoteHosts();
+  const results = await Promise.all(hosts.map((h) => window.mimi.listRemoteSessions(h.host)));
+  listEl.innerHTML = '';
+  hosts.forEach((h, i) => {
+    const label = h.name || h.host;
+    const head = document.createElement('div');
+    head.className = 'modal-host';
+    head.textContent = `${label}（${h.host}）`;
+    listEl.appendChild(head);
+    const r = results[i];
+    if (!r.ok || r.sessions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'modal-empty';
+      empty.textContent = r.ok ? 'tmux のセッションがないよ' : `つながらなかったよ: ${r.error}`;
+      listEl.appendChild(empty);
+      return;
+    }
+    for (const sess of r.sessions) {
+      const item = document.createElement('div');
+      item.className = 'modal-item';
+      item.innerHTML = '<div class="modal-item-title"></div><div class="modal-item-meta"></div>';
+      item.querySelector('.modal-item-title').textContent = sess.name;
+      const meta = [relativeTime(sess.activity), sess.command, sess.attached ? '誰かが接続中' : null].filter(Boolean);
+      item.querySelector('.modal-item-meta').textContent = meta.join(' ・ ');
+      item.addEventListener('click', () => {
+        close();
+        openRemoteTab(h, sess.name);
+      });
+      listEl.appendChild(item);
+    }
+  });
+}
+
+function openRemoteTab(hostEntry, sessionName) {
+  // 同じセッションのタブが既にあれば、それを前に出す
+  const existing = state.tabs.find((t) => t.remote?.host === hostEntry.host && t.tmuxSession === sessionName);
+  if (existing) {
+    activateTab(existing.id);
+    return;
+  }
+  const tab = {
+    id: uid('t'),
+    name: `🌐 ${hostEntry.name || hostEntry.host}:${sessionName}`.slice(0, 32),
+    groupId: currentGroupId(),
+    tmuxSession: sessionName,
+    remote: { host: hostEntry.host },
+  };
+  state.tabs.push(tab);
+  save();
+  render();
+  activateTab(tab.id);
+}
+
+document.getElementById('open-remote').addEventListener('click', openRemoteModal);
 
 // ---------- クイックコマンドバー ----------
 // ボタンひとつでアクティブタブのターミナルへコマンド+Enterを流し込む
