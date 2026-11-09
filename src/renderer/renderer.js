@@ -413,7 +413,7 @@ function applyStatus(statusEl, tab) {
     statusEl.className = 'tab-status proc';
     statusEl.textContent = '⚙';
     statusEl.title = `実行中: ${cmd}`;
-  } else if (isShell && shellProcsMap[tab.tmuxSession]) {
+  } else if (isShell && shellProcsMap[localSession(tab)]) {
     // シェルのままバックグラウンドジョブが動いてる
     statusEl.className = 'tab-status proc';
     statusEl.textContent = '⚙';
@@ -1180,7 +1180,7 @@ window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working,
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
-    const sid = sessions[tab.tmuxSession]?.sessionId;
+    const sid = sessions[localSession(tab)]?.sessionId;
     if (sid && tab.claudeSessionId !== sid) {
       tab.claudeSessionId = sid;
       changed = true;
@@ -1627,6 +1627,10 @@ function flashCopyResult(label, ok) {
 copyBtn.addEventListener('click', async (e) => {
   const tab = state.tabs.find((t) => t.id === state.activeTabId);
   if (!tab) return;
+  if (tab.remote) {
+    showToast('リモートのタブではまだコピーできないよ');
+    return;
+  }
   const res = await window.mimi.copyLastMessage({
     tmuxSession: tab.tmuxSession,
     mode: e.shiftKey ? 'full' : 'auto',
