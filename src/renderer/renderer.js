@@ -615,7 +615,19 @@ function knownClaudeSessionId(tab) {
   return claudeSessions[tab.tmuxSession]?.sessionId || tab.claudeSessionId || null;
 }
 
-function suggestResume(tab, reason) {
+const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+async function suggestResume(tab, reason) {
+  // Claude以外のエージェント（agent-sessions登録あり）を優先: 登録は動作中だけ残るので、それが直近のもの
+  const agent = await window.mimi.agentSession(tab.tmuxSession);
+  if (agent) {
+    const cmd = agent.cwd ? `cd ${shellQuote(agent.cwd)} && ${agent.resumeCommand}` : agent.resumeCommand;
+    showToast(`${reason}。前回の${agent.label}セッションを再開する？`, {
+      label: `▶ ${agent.label} を再開`,
+      run: () => window.mimi.ptyInput(tab.id, `${cmd}\r`),
+    });
+    return;
+  }
   const sid = knownClaudeSessionId(tab);
   if (!sid) {
     showToast(`${reason}。再開できるClaudeセッションIDは見つからなかったよ`);
@@ -663,8 +675,10 @@ async function recoverActiveTab() {
   // Step3: attachが落ち着いてから前面プロセスを確認。claudeのはずがシェルに落ちていたら提案
   setTimeout(async () => {
     const probe = await window.mimi.tmuxProbe(tab.tmuxSession);
-    if (probe.exists && PLAIN_SHELLS.has(probe.command) && knownClaudeSessionId(tab)) {
-      suggestResume(tab, 'ターミナルは張り直したけど、claudeが動いてないみたい');
+    if (!probe.exists || !PLAIN_SHELLS.has(probe.command)) return;
+    const agent = await window.mimi.agentSession(tab.tmuxSession);
+    if (agent || knownClaudeSessionId(tab)) {
+      suggestResume(tab, `ターミナルは張り直したけど、${agent ? agent.label : 'claude'}が動いてないみたい`);
     }
   }, 800);
 }

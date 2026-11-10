@@ -71,6 +71,18 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | `autoNameStripPrefixes` | string[] | 未設定（何も外さない） | 自動で付くタブ名（セッション取り込み・MCPの `create_tab` / `rename_tab`）から、番号の直前にあるこれらのプレフィックスを外す。例: `["PROJ-"]` で `PROJ-123 調査` → `123 調査`。手入力のリネームには効かない |
 | `pinnedTab` | object | 未設定（ボタン非表示） | よく使うタブへのワンクリック切り替えボタンをサイドバーに出す。`{"name": "タブ名", "command": "実行コマンド", "group": "グループ名(任意)", "label": "ボタン表示(任意)"}`。同名タブが無ければ作成してホームディレクトリで `command` を実行、あれば切り替えるだけ（コマンドが終了していれば再実行を提案） |
 
+### Claude以外のエージェントの再開（`~/.mimiterm/agent-sessions/<tmuxセッション名>.json`）
+
+🚑タブ復旧は通常 `claude --resume` を提案するが、タブで動いていたのが別のエージェントCLI（Qwen Code等）なら、そのCLIのラッパーが起動時にこのファイルを書いておくと、そちらの再開コマンドを提案する。
+
+```json
+{ "label": "Qwen Code", "cwd": "/path/to/project", "resumeCommand": "qwen --resume <session-id>" }
+```
+
+- ファイル名はタブのtmuxセッション名（`tmux display-message -p '#S'`）。`[A-Za-z0-9._-]` 以外を含む名前は無視される
+- **エージェントが動いている間だけ置き、正常終了したら消す**運用にすること。ファイルがあれば `claude --resume` より優先される
+- `resumeCommand` は1行のみ（改行を含むと無視）。提案トーストのボタンを押した時だけ `cd <cwd> && <resumeCommand>` がタブに入力される
+
 ### 今日パネルの予定データ（`~/.mimiterm/calendar-cache.json`）
 
 アプリはカレンダーAPIへ直接アクセスしない。予定の取得は外部ツール（Claude セッションの Google Calendar 連携、cron スクリプト等）が行い、以下の形式でこのファイルへ書く。アプリは1分毎に読み直し、`date` が今日でないキャッシュは無視する（ファイルが無ければパネルのカレンダー部は非表示）。

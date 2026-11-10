@@ -202,6 +202,26 @@ ipcMain.handle('tmux:probe', (_e, sessionName) => {
   });
 });
 
+// Claude以外のエージェントCLI（Qwen Code等）の再開情報。ラッパー側が起動時に書き、正常終了時に消す。
+// ~/.mimiterm/agent-sessions/<tmuxSession>.json = { "label", "cwd", "resumeCommand" }
+// ファイルがある＝そのタブでエージェントが動いていた（落ちた・tmuxごと消えた）ので、🚑復旧で再開を提案する。
+const AGENT_SESSIONS_DIR = path.join(STATE_DIR, 'agent-sessions');
+ipcMain.handle('agent:session', (_e, sessionName) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(String(sessionName))) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(AGENT_SESSIONS_DIR, `${sessionName}.json`), 'utf8'));
+    const cmd = typeof j.resumeCommand === 'string' ? j.resumeCommand.trim() : '';
+    if (!cmd || /[\r\n]/.test(cmd)) return null; // 1行コマンドのみ（ptyへ流すので改行は拒否）
+    return {
+      label: typeof j.label === 'string' && j.label ? j.label : 'agent',
+      cwd: typeof j.cwd === 'string' && j.cwd ? j.cwd : null,
+      resumeCommand: cmd,
+    };
+  } catch {
+    return null;
+  }
+});
+
 // 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
 ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
   return new Promise((resolve) => {
