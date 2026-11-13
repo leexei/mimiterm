@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon, Unicode11Addon */
+/* global Terminal, FitAddon, WebLinksAddon, Unicode11Addon, MimiSchedule */
 
 // ---- 一時デバッグ計装（原因特定後に削除する） ----
 window.addEventListener('error', (e) => {
@@ -74,7 +74,8 @@ const terminalsEl = document.getElementById('terminals');
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 // ローカル(JST)のYYYY-MM-DD。toISOStringはUTCで0〜9時にズレるので使わない
-const localToday = () => new Date().toLocaleDateString('sv-SE');
+const localToday = () => MimiSchedule.todayStr();
+let renderedDay = null; // サイドバーを最後に描いた日付（日付またぎの検知用）
 
 function save() {
   window.mimi.saveState(state);
@@ -88,6 +89,7 @@ function updateWindowTitle() {
 // ---------- sidebar rendering ----------
 
 function render() {
+  renderedDay = localToday();
   groupsEl.innerHTML = '';
   for (const group of state.groups) {
     groupsEl.appendChild(renderGroup(group));
@@ -146,8 +148,16 @@ function renderGroup(group) {
 
   const tabsEl = document.createElement('div');
   tabsEl.className = 'tabs';
-  for (const tab of state.tabs.filter((t) => t.groupId === group.id)) {
-    tabsEl.appendChild(renderTab(tab, group));
+  // グループ内を再開予定日で区切る（今日/明日/今週/それ以降/未定）。並びは表示だけで、state.tabs の順序は変えない。
+  // 予定日つきのタブが1つも無いグループは「未定」だけになるので、見出しを出さず従来どおりに並べる
+  const sections = MimiSchedule.splitIntoSections(
+    state.tabs.filter((t) => t.groupId === group.id),
+    localToday()
+  );
+  const showHeadings = sections.some((s) => s.key !== 'unscheduled');
+  for (const section of sections) {
+    if (showHeadings) tabsEl.appendChild(renderSectionHeading(section));
+    for (const tab of section.tabs) tabsEl.appendChild(renderTab(tab, group));
   }
   groupEl.appendChild(tabsEl);
 
@@ -186,6 +196,27 @@ function renderGroup(group) {
   });
 
   return groupEl;
+}
+
+function renderSectionHeading(section) {
+  const el = document.createElement('div');
+  el.className = `schedule-section section-${section.key}`;
+  el.title = MimiSchedule.sectionRange(section.key, localToday());
+  const label = document.createElement('span');
+  label.className = 'section-label';
+  label.textContent = section.label;
+  el.appendChild(label);
+  const count = document.createElement('span');
+  count.className = 'section-count';
+  count.textContent = section.tabs.length;
+  el.appendChild(count);
+  if (section.overdueCount > 0) {
+    const overdue = document.createElement('span');
+    overdue.className = 'section-overdue';
+    overdue.textContent = `期限切れ ${section.overdueCount}`;
+    el.appendChild(overdue);
+  }
+  return el;
 }
 
 function moveGroupRelative(draggedId, targetGroup, before) {
@@ -250,8 +281,11 @@ function renderTab(tab, group) {
     tabEl.appendChild(mark);
   }
 
-  if (tab.scheduledFor) {
-    const due = tab.scheduledFor <= localToday();
+  // 暦として壊れた値は「未定」扱いなので、チップも出さない
+  if (MimiSchedule.isYmd(tab.scheduledFor)) {
+    const due = MimiSchedule.isDue(tab.scheduledFor, localToday());
+    const overdue = tab.scheduledFor < localToday();
+    if (overdue) tabEl.classList.add('overdue');
     // 日付グループに入っているタブは、グループ名が同じ日付を示すのでチップは重複。
     // 当日を迎えたものだけ ⏰ を残して気づけるようにする
     const shownByGroup = group?.name === `📅 ${tab.scheduledFor}`;
@@ -262,9 +296,13 @@ function renderTab(tab, group) {
         ? tab.scheduledFor.slice(5).replace('-', '/')
         : tab.scheduledFor.replace(/-/g, '/');
       const chip = document.createElement('span');
-      chip.className = 'schedule-chip' + (due ? ' due' : '');
-      chip.textContent = shownByGroup ? '⏰' : `${due ? '⏰' : '⏳'}${label}`;
-      chip.title = due ? `再開予定日が来ています: ${tab.scheduledFor}` : `再開予定: ${tab.scheduledFor}`;
+      chip.className = 'schedule-chip' + (overdue ? ' overdue' : due ? ' due' : '');
+      chip.textContent = shownByGroup && !overdue ? '⏰' : `${due ? '⏰' : '⏳'}${label}`;
+      chip.title = overdue
+        ? `再開予定日を過ぎています: ${tab.scheduledFor}`
+        : due
+          ? `再開予定日が来ています: ${tab.scheduledFor}`
+          : `再開予定: ${tab.scheduledFor}`;
       tabEl.appendChild(chip);
     }
   }
@@ -401,6 +439,12 @@ function moveTabRelative(draggedId, targetTab, before) {
   state.tabs.splice(idx, 0, dragged);
   save();
   render();
+  // 表示は予定日の区切り→日付順なので、予定日の違うタブの所へ落としても見た目の位置は動かない。
+  // 無反応に見えないよう理由を伝える（グループ移動と、同じ予定日どうしの並べ替えは反映される）
+  const dateOf = (t) => (MimiSchedule.isYmd(t.scheduledFor) ? t.scheduledFor : null);
+  if (dateOf(dragged) !== dateOf(targetTab)) {
+    showToast('タブは再開予定日の順に並ぶよ。区切りを移すには予定日を変えてね');
+  }
 }
 
 function iconButton(label, title, onClick) {
@@ -1716,7 +1760,7 @@ function calcFreeHours(events) {
 
 function renderTodayPanel() {
   const panel = document.getElementById('today-panel');
-  const dueTabs = state.tabs.filter((t) => t.scheduledFor && t.scheduledFor <= localToday());
+  const dueTabs = state.tabs.filter((t) => MimiSchedule.isDue(t.scheduledFor, localToday()));
   if (!calendar && dueTabs.length === 0) {
     panel.classList.add('hidden');
     return;
@@ -1812,6 +1856,17 @@ window.mimi.onCalendarUpdate((data) => {
 window.mimi.onTabActivate((tabId) => activateTab(tabId));
 
 setInterval(renderTodayPanel, 60 * 1000);
+
+// 開きっぱなしで日付をまたいだら、予定日の区切り（今日/明日/…）を引き直す。
+// スリープ明けはタイマーが遅れることがあるので、ウィンドウに戻った時にも確かめる
+function refreshOnDayChange() {
+  if (renderedDay === localToday()) return;
+  // リネーム入力中に描き直すと入力欄が消えるので、確定後の次回に回す
+  if (document.querySelector('.rename-input')) return;
+  render();
+}
+setInterval(refreshOnDayChange, 30 * 1000);
+window.addEventListener('focus', refreshOnDayChange);
 
 // ---------- 埋め込みブラウザペイン ----------
 

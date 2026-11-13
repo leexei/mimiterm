@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { autoTabName } = require('./tab-name');
+const { todayStr, sectionOf, isYmd, isDue } = require('./schedule-sections');
 
 const CONFIG_FILE = path.join(os.homedir(), '.mimiterm', 'mcp.json');
 const DEFAULT_PORT = 48237;
@@ -45,6 +46,17 @@ function resolveGroup(state, ref) {
   );
 }
 
+// 再開予定日まわりの項目（list_tabs / conductor_status 共通）。
+// scheduleSection はサイドバーの区切りと同じ: today / tomorrow / this-week / later / unscheduled
+function scheduleInfo(tab, today = todayStr()) {
+  const { key, overdue } = sectionOf(tab.scheduledFor, today);
+  return {
+    scheduledFor: tab.scheduledFor ?? null,
+    scheduleSection: key,
+    overdue,
+  };
+}
+
 // 司令塔タブの対象外: 非Claudeエージェントが動いたタブ（agentMarks）か、手動で対象外にしたタブ
 const isConductorExcluded = (tab) => !!(tab.agentMarks?.length || tab.conductorExcluded);
 
@@ -63,8 +75,8 @@ function tabSummary(state, tab, claudeSessions) {
     contextPct: info?.pct ?? null,
     model: info?.model ?? null,
     badge: tab.badgeEmoji ?? null,
-    scheduledFor: tab.scheduledFor ?? null,
-    dueToday: !!(tab.scheduledFor && tab.scheduledFor <= new Date().toLocaleDateString('sv-SE')),
+    ...scheduleInfo(tab),
+    dueToday: isDue(tab.scheduledFor),
     agentMarks: tab.agentMarks ?? [],
     conductor: state.conductorTabId === tab.id,
     conductorExcluded: isConductorExcluded(tab),
@@ -79,6 +91,7 @@ const TOOLS = [
     name: 'list_tabs',
     description:
       'MimiTerm の全グループと全タブの一覧を返す。各タブの Claude コンテキスト使用率(contextPct)・セッションID・再開予定日(scheduledFor)・バッジも含む。タブ棚卸しはまずこれを呼ぶ。' +
+      'scheduleSection はサイドバーの区切り（today / tomorrow / this-week=明後日〜7日後 / later / unscheduled=予定日なし）、overdue は予定日を過ぎたタブ（today に入る）。' +
       'agentMarks は、そのタブで動いたことのある Claude 以外のエージェント名（目印）。' +
       "link はクリックでそのタブへ切り替わるリンク。ターミナルへは printf '\\e]8;;<link>\\e\\\\表示テキスト\\e]8;;\\e\\\\\\n' のように OSC 8 で貼る。",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -250,6 +263,8 @@ const TOOLS = [
     description:
       '司令塔タブ用: 指示してよいタブの現況をまとめて返す。state は working(作業中) / waiting(応答待ち) / plan-stopped(planモードで停止) / shell / other-process。' +
       'lastEvent はそのタブで直近に起きたイベント（許可待ち・質問待ち・ターン終了など）。' +
+      'scheduledFor は再開予定日(YYYY-MM-DD、未設定は null)。scheduleSection はサイドバーの区切り（today / tomorrow / this-week=明後日〜7日後 / later / unscheduled=予定日なし）、' +
+      'overdue は予定日を過ぎたタブ（today に入る）。today は判定に使った今日の日付。' +
       'tmuxSession を ListAgents の「tmux <セッション名>」と突き合わせると SendMessage の宛先が分かる。' +
       'excluded は対象外タブ（Claude以外のエージェントが動いたタブ等）。対象外タブへは指示を送らず、中身も読まないこと。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -259,6 +274,7 @@ const TOOLS = [
       const events = ctx.getConductorEvents();
       const conductor = state.tabs.find((t) => t.id === state.conductorTabId) || null;
       const groupName = (tab) => state.groups.find((g) => g.id === tab.groupId)?.name ?? null;
+      const today = todayStr();
       const tabs = [];
       const excluded = [];
       for (const tab of state.tabs) {
@@ -282,12 +298,14 @@ const TOOLS = [
           state: runState,
           contextPct: sessions[tab.tmuxSession]?.pct ?? null,
           active: state.activeTabId === tab.id,
+          ...scheduleInfo(tab, today),
           // 作業を再開したタブの古いイベントは、もう止まっていないので出さない
           lastEvent: runState === 'working' ? null : lastEvent,
         });
       }
       return {
         conductor: conductor ? { id: conductor.id, name: conductor.name, tmuxSession: conductor.tmuxSession } : null,
+        today,
         tabs,
         excluded,
       };
@@ -338,7 +356,7 @@ const TOOLS = [
   {
     name: 'schedule_tab',
     description:
-      'タブに再開予定日を設定する（例: 3日後に再開するタスク）。設定するとタブに ⏳日付 が表示される。date に空文字で解除。',
+      'タブに再開予定日を設定する（例: 3日後に再開するタスク）。設定するとタブに ⏳日付 が表示され、サイドバーのグループ内で 今日/明日/今週/それ以降/未定 の区切りに自動で振り分けられる。date に空文字で解除。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -349,8 +367,8 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async (args, ctx) => {
-      if (args.date && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
-        throw new Error(`日付は YYYY-MM-DD 形式で指定してください: ${args.date}`);
+      if (args.date && !isYmd(args.date)) {
+        throw new Error(`日付は実在する日を YYYY-MM-DD 形式で指定してください: ${args.date}`);
       }
       const date = args.date || null;
       const { tabName } = ctx.mutateState((state) => {

@@ -14,6 +14,7 @@
 
 - `conductor_status` の `tabs` が指示してよいタブ。各タブの `tmuxSession` と、`ListAgents` の各行に出る `tmux <セッション名>` を突き合わせると、タブ ↔ 宛先名が決まる。
 - `ListAgents` に出てこないタブは、Claude が動いていないか、メッセージを受け取れない状態。その場合は指示を送れないとユーザーに伝える。
+- 各タブの `scheduledFor` は再開予定日、`scheduleSection` はサイドバーの区切り（`today` / `tomorrow` / `this-week` = 明後日〜7日後 / `later` / `unscheduled` = 予定日なし）。`overdue` が true のタブは予定日を過ぎている。「今日やるタブは？」と聞かれたら `today` のタブを、期限切れを先頭にして答える。
 - `conductor_status` の `excluded` は **対象外タブ**（Claude 以外のエージェントが動いたことのあるタブ、またはユーザーが対象外にしたタブ）。
 
 ## 対象外タブの扱い（厳守）
