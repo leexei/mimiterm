@@ -1,11 +1,12 @@
 /* global Terminal, FitAddon, WebLinksAddon, Unicode11Addon, MimiSchedule */
 
-// ---- 一時デバッグ計装（原因特定後に削除する） ----
+// Finder / Dock から起動したアプリでは画面側のコンソールを後から見られないので、
+// 拾われなかった例外は ~/.mimiterm/renderer.log に残す
 window.addEventListener('error', (e) => {
-  window.mimi?.debugLog?.(`window.onerror: ${e.message} @${e.filename}:${e.lineno}`);
+  window.mimi?.logError?.(`window.onerror: ${e.message} @${e.filename}:${e.lineno}`);
 });
 window.addEventListener('unhandledrejection', (e) => {
-  window.mimi?.debugLog?.(`unhandledrejection: ${e.reason?.stack || e.reason}`);
+  window.mimi?.logError?.(`unhandledrejection: ${e.reason?.stack || e.reason}`);
 });
 
 // シェル/Claude入力にそのまま渡せるよう、スペース等のシェル特殊文字だけをエスケープする
@@ -1338,26 +1339,18 @@ function renderRateLimits(rl) {
   el.innerHTML = row('5h', rl.five_hour) + row('週', rl.seven_day);
 }
 
-let claudeSessionsRecvCount = 0; // 一時デバッグ計装
 window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working, shellProcs, rateLimits }) => {
   claudeSessions = sessions;
   activityMap = activity;
   workingMap = working ?? {};
   shellProcsMap = shellProcs ?? {};
   paneCommands = cmds ?? {};
-  // 一時デバッグ計装: 受信を最初の3回だけ記録
-  claudeSessionsRecvCount++;
-  if (claudeSessionsRecvCount <= 3) {
-    window.mimi.debugLog(
-      `claude:sessions received #${claudeSessionsRecvCount} cmds=${Object.keys(paneCommands).length} working=${Object.keys(workingMap).filter((k) => workingMap[k]).length}`
-    );
-  }
   // 補助UI（利用制限バー・クイックバー）の例外で本体のステータス更新を道連れにしない
   try {
     renderRateLimits(rateLimits);
     renderQuickbar();
   } catch (e) {
-    window.mimi.debugLog(`aux render error: ${e.stack || e}`);
+    window.mimi.logError(`aux render error: ${e.stack || e}`);
   }
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
@@ -1373,7 +1366,7 @@ window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working,
     updateBadges();
     renderStatusBar();
   } catch (e) {
-    window.mimi.debugLog(`updateBadges error: ${e.stack || e}`);
+    window.mimi.logError(`updateBadges error: ${e.stack || e}`);
   }
 });
 

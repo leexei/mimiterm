@@ -29,5 +29,6 @@ contextBridge.exposeInMainWorld('mimi', {
   getCalendar: () => ipcRenderer.invoke('calendar:get'),
   onCalendarUpdate: (cb) => ipcRenderer.on('calendar:update', (_e, data) => cb(data)),
   onTabActivate: (cb) => ipcRenderer.on('tab:activate', (_e, tabId) => cb(tabId)),
-  debugLog: (msg) => ipcRenderer.send('debug:log', String(msg)),
+  // 画面側で起きた例外をファイル（~/.mimiterm/renderer.log）へ残す
+  logError: (msg) => ipcRenderer.send('renderer:log-error', String(msg)),
 });

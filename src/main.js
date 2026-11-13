@@ -982,7 +982,9 @@ function collectAgentActivity(sessions, now) {
 // 膨らみ続けないよう、上限を超えたら1世代（.1）だけ残して切り替える（現行＋.1 で約512KBまで）
 const LOG_MAX_BYTES = 256 * 1024;
 const MAIN_LOG = path.join(STATE_DIR, 'main.log');
-const RENDERER_LOG = path.join(STATE_DIR, 'debug-renderer.log');
+const RENDERER_LOG = path.join(STATE_DIR, 'renderer.log');
+// 以前の調査用ログ。もう書く処理は無いので、起動時に一度だけ消す
+const LEGACY_DEBUG_LOGS = ['debug-tick.log', 'debug-renderer.log', 'debug-renderer.log.1'];
 function logAppend(file, msg) {
   try {
     try {
@@ -995,11 +997,40 @@ function logAppend(file, msg) {
     // ログ失敗は無視
   }
 }
-ipcMain.on('debug:log', (_e, msg) => logAppend(RENDERER_LOG, msg));
+
+// 画面側の例外の記録。1.5秒ごとの更新処理の中で起きるものは同じ内容が毎回届くので、
+// 同じ文言は RENDERER_LOG_REPEAT_MS が過ぎるまで書かない（最初の記録が切り替えで流れて消えるのを防ぐ）
+const RENDERER_LOG_REPEAT_MS = 10 * 60 * 1000;
+const RENDERER_LOG_TRACKED_MAX = 100;
+const rendererLoggedAt = new Map(); // 文言 -> 最後に書いた時刻
+const RENDERER_LOG_MSG_MAX = 4000;
+ipcMain.on('renderer:log-error', (_e, rawMsg) => {
+  const msg = String(rawMsg).slice(0, RENDERER_LOG_MSG_MAX);
+  const now = Date.now();
+  const loggedAt = rendererLoggedAt.get(msg);
+  // Map は挿入順を保つ。届くたびに入れ直して末尾へ送り、先頭が「最も長く届いていない文言」になるようにする
+  rendererLoggedAt.delete(msg);
+  if (loggedAt !== undefined && now - loggedAt < RENDERER_LOG_REPEAT_MS) {
+    rendererLoggedAt.set(msg, loggedAt);
+    return;
+  }
+  // 文言が毎回違う異常で覚える量が増え続けないよう、長く届いていないものから1件ずつ忘れる。
+  // （全部忘れると、毎回届く同じ文言まで抑えが外れてしまう）
+  if (rendererLoggedAt.size >= RENDERER_LOG_TRACKED_MAX) {
+    rendererLoggedAt.delete(rendererLoggedAt.keys().next().value);
+  }
+  rendererLoggedAt.set(msg, now);
+  logAppend(RENDERER_LOG, msg);
+});
 
 // 1.5秒ごとのtickで起きる異常は、同じものが続く間は最初の1回だけ記録する。
 // 毎tick書くと、原因を示す最初の記録と発生時刻が切り替えで流れて消えるため。
 // signature が変われば別の異常として記録し直す。解消したら clearProblem で戻し、再発時にまた記録する
+const PROBLEM = {
+  PANE_FORMAT: 'PANE FORMAT',
+  CONDUCTOR: 'CONDUCTOR ERROR',
+  TICK: 'TICK ERROR',
+};
 const activeProblems = new Map(); // key -> signature
 function reportProblem(key, signature, detail) {
   if (activeProblems.get(key) === signature) return;
@@ -1010,7 +1041,19 @@ function reportProblem(key, signature, detail) {
 function clearProblem(key) {
   activeProblems.delete(key);
 }
-const reportError = (key, e) => reportProblem(key, String(e), e?.stack || String(e));
+// 例外は「種類＋エラーコード＋投げられた場所」で同じ異常とみなす。
+// 文言にパスや時刻などの可変部分が入っても、毎tick別物として書かないため。
+// 場所は Node 内部（node:fs 等）を飛ばした最初のフレーム。内部だけなら先頭フレームを使う
+function errorSignature(e) {
+  const frames = String(e?.stack || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('at '));
+  const frame = frames.find((l) => !l.includes('node:')) || frames[0];
+  if (!frame) return String(e);
+  return `${e.name ?? 'Error'}:${e.code ?? ''}@${frame}`;
+}
+const reportError = (key, e) => reportProblem(key, errorSignature(e), e?.stack || String(e));
 
 setInterval(async () => {
   try {
@@ -1042,12 +1085,12 @@ setInterval(async () => {
     // 黙って全タブの状態を失わないよう知らせる。出力が取れなかったtick（out が null）は判定材料が無いので状態を変えない
     if (brokenLine !== null) {
       reportProblem(
-        'PANE FORMAT',
+        PROBLEM.PANE_FORMAT,
         'unsplittable',
         `tmux list-panes の出力を区切れません: ${JSON.stringify(brokenLine.slice(0, 120))}`
       );
     } else {
-      clearProblem('PANE FORMAT');
+      clearProblem(PROBLEM.PANE_FORMAT);
     }
   }
   const sessions = collectClaudeSessions();
@@ -1115,9 +1158,9 @@ setInterval(async () => {
   try {
     syncAgentMarks(loadState());
     publishWatching(loadState());
-    clearProblem('CONDUCTOR ERROR');
+    clearProblem(PROBLEM.CONDUCTOR);
   } catch (e) {
-    reportError('CONDUCTOR ERROR', e);
+    reportError(PROBLEM.CONDUCTOR, e);
   }
   const state = loadState();
   const notifEnabled = state.settings?.notifications !== false;
@@ -1193,9 +1236,9 @@ setInterval(async () => {
       rateLimits: latestRateLimits,
     });
   }
-  clearProblem('TICK ERROR');
+  clearProblem(PROBLEM.TICK);
   } catch (e) {
-    reportError('TICK ERROR', e);
+    reportError(PROBLEM.TICK, e);
   }
 }, 1500);
 
@@ -1211,8 +1254,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
-    // 一度きりの掃除: 以前の調査用に毎tick書いていた記録の残骸（100MB超）を消す。もう書く処理は無い
-    fs.rm(path.join(STATE_DIR, 'debug-tick.log'), { force: true }, () => {});
+    for (const name of LEGACY_DEBUG_LOGS) fs.rm(path.join(STATE_DIR, name), { force: true }, () => {});
     buildMenu();
     // 開発起動（npm start）でもDockに猫アイコンを出す
     const devIcon = path.join(__dirname, '..', 'assets', 'icon-1024.png');
