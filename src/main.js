@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
 const pty = require('node-pty');
+const { TMUX, tmuxArgs, tmuxExec, tmuxExecP } = require('./tmux');
 const { startMcpServer } = require('./mcp-server');
 const { autoTabName } = require('./tab-name');
 
@@ -16,14 +17,6 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
-// GUI起動時はbrewのPATHを継承しないため、tmuxは既知パスから解決する
-const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
-// tmux は必ず -u（UTF-8を強制）を付けて呼ぶこと。
-// Finder / Dock から起動したアプリには LANG 等のロケール環境変数が無く、-u なしの tmux クライアントは
-// 非UTF-8扱いになって、list-panes 等の出力中のタブ文字を '_' に置き換える。区切り（タブ文字）が壊れると
-// 全タブの稼働状態（サイドバーの●/✳、conductor_status の state）が取れなくなる
-const TMUX = TMUX_CANDIDATES.find((p) => fs.existsSync(p)) || 'tmux';
-
 // 同期出力(DECSET 2026)を外側ターミナル(=MimiTerm)へ通すようtmuxへ宣言する。
 // レンダラー側で2026をパースしてバッファ描画するため、Claude Code等の再描画がちらつかない。
 // hyperlinksを宣言しないとtmuxはOSC 8を剥がして文字だけ送るため、埋め込みリンクがクリックできない
@@ -35,7 +28,7 @@ function ensureTmuxConf() {
 }
 function applyTmuxSyncFeature() {
   // 既に起動中のtmuxサーバーにも反映（サーバー未起動ならエラーになるだけなので無視）
-  execFile(TMUX, ['-u', 'set', '-s', 'terminal-features', TMUX_TERMINAL_FEATURES], () => {});
+  tmuxExec(['set', '-s', 'terminal-features', TMUX_TERMINAL_FEATURES]);
 }
 
 const ptys = new Map(); // tabId -> IPty
@@ -176,7 +169,7 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
   const claudeModel = loadState().settings?.claudeModel || null;
   const modelArgs = claudeModel ? ['-e', `ANTHROPIC_MODEL=${claudeModel}`] : [];
   ensureTmuxConf();
-  const p = pty.spawn(TMUX, ['-u', '-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession], {
+  const p = pty.spawn(TMUX, tmuxArgs(['-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession]), {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
@@ -191,7 +184,7 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
   if (initialCommand) {
     // セッション生成直後はシェル起動前なので、少し待ってから send-keys で流し込む
     setTimeout(() => {
-      execFile(TMUX, ['-u', 'send-keys', '-t', tmuxSession, initialCommand, 'Enter'], () => {});
+      tmuxExec(['send-keys', '-t', tmuxSession, initialCommand, 'Enter']);
     }, 700);
   }
   p.onData((data) => {
@@ -227,7 +220,7 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
 // タブ復旧トリアージ用: セッションの有無と前面プロセス名を1回で返す
 ipcMain.handle('tmux:probe', (_e, sessionName) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['-u', 'display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
+    tmuxExec(['display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
       if (err) resolve({ exists: false, command: null });
       else resolve({ exists: true, command: String(stdout).trim() });
     });
@@ -361,7 +354,7 @@ function latestConductorEvents() {
 // 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
 ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['-u', 'capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
+    tmuxExec(['capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
       const capture = err ? `(capture-pane 失敗: ${err.message})` : String(stdout).replace(/\s+$/, '');
       const file = path.join(STATE_DIR, 'diagnose', `${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -401,7 +394,7 @@ ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId 
 // ホバープレビュー用: セッションの現在画面をテキストで取得（LLM不要・低コスト）
 ipcMain.handle('tmux:capture', (_e, sessionName) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['-u', 'capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
+    tmuxExec(['capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
       if (err) {
         resolve(null);
         return;
@@ -412,7 +405,7 @@ ipcMain.handle('tmux:capture', (_e, sessionName) => {
 });
 
 ipcMain.on('tmux:kill-session', (_e, name) => {
-  execFile(TMUX, ['-u', 'kill-session', '-t', name], () => {});
+  tmuxExec(['kill-session', '-t', name]);
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
 
@@ -984,28 +977,45 @@ function collectAgentActivity(sessions, now) {
   return active;
 }
 
-// ---- 一時デバッグ計装（原因特定後に削除する） ----
-const DEBUG_TICK_LOG = path.join(STATE_DIR, 'debug-tick.log');
-const DEBUG_RENDERER_LOG = path.join(STATE_DIR, 'debug-renderer.log');
-function debugAppend(file, msg) {
+// ---- 異常時だけ書くログ ----
+// Finder / Dock から起動したアプリの console 出力は後から見られないので、警告とエラーはファイルにも残す。
+// 膨らみ続けないよう、上限を超えたら1世代（.1）だけ残して切り替える（現行＋.1 で約512KBまで）
+const LOG_MAX_BYTES = 256 * 1024;
+const MAIN_LOG = path.join(STATE_DIR, 'main.log');
+const RENDERER_LOG = path.join(STATE_DIR, 'debug-renderer.log');
+function logAppend(file, msg) {
   try {
+    try {
+      if (fs.statSync(file).size > LOG_MAX_BYTES) fs.renameSync(file, `${file}.1`);
+    } catch {
+      // まだ無いファイルは切り替え不要
+    }
     fs.appendFileSync(file, `${new Date().toISOString()} ${msg}\n`);
   } catch {
-    // デバッグログ失敗は無視
+    // ログ失敗は無視
   }
 }
-ipcMain.on('debug:log', (_e, msg) => debugAppend(DEBUG_RENDERER_LOG, msg));
+ipcMain.on('debug:log', (_e, msg) => logAppend(RENDERER_LOG, msg));
 
-let warnedPaneFormat = false;
+// 1.5秒ごとのtickで起きる異常は、同じものが続く間は最初の1回だけ記録する。
+// 毎tick書くと、原因を示す最初の記録と発生時刻が切り替えで流れて消えるため。
+// signature が変われば別の異常として記録し直す。解消したら clearProblem で戻し、再発時にまた記録する
+const activeProblems = new Map(); // key -> signature
+function reportProblem(key, signature, detail) {
+  if (activeProblems.get(key) === signature) return;
+  activeProblems.set(key, signature);
+  console.error(`[MimiTerm] ${key}: ${detail}`);
+  logAppend(MAIN_LOG, `${key}: ${detail}`);
+}
+function clearProblem(key) {
+  activeProblems.delete(key);
+}
+const reportError = (key, e) => reportProblem(key, String(e), e?.stack || String(e));
+
 setInterval(async () => {
   try {
-  if (!win || win.isDestroyed()) {
-    debugAppend(DEBUG_TICK_LOG, 'skip: win missing/destroyed');
-    return;
-  }
-  const tickStart = Date.now(); // 一時デバッグ計装
-  const out = await execFileP(TMUX, [
-    '-u',
+  if (!win || win.isDestroyed()) return;
+  const out = await tmuxExecP([
     'list-panes',
     '-a',
     '-F',
@@ -1015,14 +1025,12 @@ setInterval(async () => {
   const paneCommands = {};
   const panePids = {};
   if (out) {
+    let brokenLine = null;
     for (const line of out.trim().split('\n')) {
       const [sess, at, cmd, pid] = line.split('\t');
       if (pid === undefined) {
-        // 区切りのタブ文字が届いていない（tmuxが非UTF-8扱いで置き換えた等）。黙って全タブの状態を失わないよう一度だけ知らせる
-        if (!warnedPaneFormat) {
-          warnedPaneFormat = true;
-          console.warn(`[MimiTerm] tmux list-panes の出力を区切れません: ${JSON.stringify(line.slice(0, 120))}`);
-        }
+        // 区切りのタブ文字が届いていない（tmuxが非UTF-8扱いで置き換えた等）
+        if (brokenLine === null) brokenLine = line;
         continue;
       }
       if (sess && sess.startsWith('mimi-')) {
@@ -1030,6 +1038,16 @@ setInterval(async () => {
         paneCommands[sess] = cmd || null;
         panePids[sess] = Number(pid) || null;
       }
+    }
+    // 黙って全タブの状態を失わないよう知らせる。出力が取れなかったtick（out が null）は判定材料が無いので状態を変えない
+    if (brokenLine !== null) {
+      reportProblem(
+        'PANE FORMAT',
+        'unsplittable',
+        `tmux list-panes の出力を区切れません: ${JSON.stringify(brokenLine.slice(0, 120))}`
+      );
+    } else {
+      clearProblem('PANE FORMAT');
     }
   }
   const sessions = collectClaudeSessions();
@@ -1090,40 +1108,6 @@ setInterval(async () => {
     else if (now - (lastWorkingAt.get(sess) || 0) < 5000) working[sess] = true;
   }
 
-  // ---- 一時デバッグ計装: アプリが見ているtmuxの生の姿を毎tick記録（原因特定後に削除する） ----
-  {
-    const ages = Object.keys(activity).map((s) => now - activity[s]);
-    const minAge = ages.length ? Math.min(...ages) : -1;
-    const firstLine = out ? out.trim().split('\n')[0] : 'NO_OUTPUT';
-    debugAppend(
-      DEBUG_TICK_LOG,
-      `RAW minActAge=${minAge} execMs=${now - tickStart} tmux=${TMUX} ` +
-        `TMUX_TMPDIR=${process.env.TMUX_TMPDIR || '-'} TMPDIR=${process.env.TMPDIR || '-'} ` +
-        `first=[${firstLine}]`
-    );
-  }
-
-  // ---- 一時デバッグ計装: 出力が新鮮なセッションの信号中間値を吐く（原因特定後に削除する） ----
-  for (const sess of Object.keys(activity)) {
-    const age = now - activity[sess];
-    if (age < 6000) {
-      const info = sessions[sess];
-      let tAge = 'none';
-      if (info?.transcriptPath) {
-        try {
-          tAge = String(Math.round(now - fs.statSync(info.transcriptPath).mtimeMs));
-        } catch (e) {
-          tAge = `ERR:${e.code || e.message}`;
-        }
-      }
-      debugAppend(
-        DEBUG_TICK_LOG,
-        `DBG ${sess} actAge=${age} streak=${activityStreak.get(sess)} tAge=${tAge} ` +
-          `updAge=${info ? now - info.updatedAt : 'noinfo'} cmd=${paneCommands[sess]} working=${!!working[sess]}`
-      );
-    }
-  }
-
   lastTick = { working, paneCommands, sessions };
 
   // ---- 通知とDockバッジ ----
@@ -1131,8 +1115,9 @@ setInterval(async () => {
   try {
     syncAgentMarks(loadState());
     publishWatching(loadState());
+    clearProblem('CONDUCTOR ERROR');
   } catch (e) {
-    debugAppend(DEBUG_TICK_LOG, `CONDUCTOR ERROR: ${e.stack || e}`);
+    reportError('CONDUCTOR ERROR', e);
   }
   const state = loadState();
   const notifEnabled = state.settings?.notifications !== false;
@@ -1207,16 +1192,10 @@ setInterval(async () => {
       shellProcs,
       rateLimits: latestRateLimits,
     });
-    debugAppend(
-      DEBUG_TICK_LOG,
-      `sent act=${Object.keys(activity).length} sess=${Object.keys(sessions).length} ` +
-        `cmds=${Object.keys(paneCommands).length} working=${Object.keys(working).filter((k) => working[k]).length} waiting=${waitingCount}`
-    );
-  } else {
-    debugAppend(DEBUG_TICK_LOG, 'not sent: win missing/destroyed at send');
   }
+  clearProblem('TICK ERROR');
   } catch (e) {
-    debugAppend(DEBUG_TICK_LOG, `TICK ERROR: ${e.stack || e}`);
+    reportError('TICK ERROR', e);
   }
 }, 1500);
 
@@ -1232,6 +1211,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    // 一度きりの掃除: 以前の調査用に毎tick書いていた記録の残骸（100MB超）を消す。もう書く処理は無い
+    fs.rm(path.join(STATE_DIR, 'debug-tick.log'), { force: true }, () => {});
     buildMenu();
     // 開発起動（npm start）でもDockに猫アイコンを出す
     const devIcon = path.join(__dirname, '..', 'assets', 'icon-1024.png');

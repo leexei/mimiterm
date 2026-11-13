@@ -310,10 +310,11 @@ function renderTab(tab, group, sectionKey) {
         : tab.scheduledFor.replace(/-/g, '/');
       const chip = document.createElement('span');
       chip.className = 'schedule-chip' + (overdue ? ' overdue' : due ? ' due' : '');
-      // 「今日」「明日」の見出しの下では日付が見出しと重複するので絵文字だけにして、タブ名の幅を空ける。
+      // 日付グループ名や「今日」「明日」の見出しが同じ日付を示しているなら、絵文字だけにしてタブ名の幅を空ける。
       // 期限切れは、いつの予定だったかが要るので日付を残す
-      const dateInHeading = !overdue && (sectionKey === 'today' || sectionKey === 'tomorrow');
-      chip.textContent = (shownByGroup || dateInHeading) && !overdue ? (due ? '⏰' : '⏳') : `${due ? '⏰' : '⏳'}${label}`;
+      const dateShownElsewhere = shownByGroup || sectionKey === 'today' || sectionKey === 'tomorrow';
+      const icon = due ? '⏰' : '⏳';
+      chip.textContent = dateShownElsewhere && !overdue ? icon : `${icon}${label}`;
       chip.title = overdue
         ? `再開予定日を過ぎています: ${tab.scheduledFor}`
         : due
