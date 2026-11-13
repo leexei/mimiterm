@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('mimi', {
   copyLastMessage: (opts) => ipcRenderer.invoke('clipboard:copy-last', opts),
   readPaste: () => ipcRenderer.invoke('clipboard:read-paste'),
   tmuxProbe: (sessionName) => ipcRenderer.invoke('tmux:probe', sessionName),
+  clearAgentMarks: (tabId) => ipcRenderer.invoke('agent:clear-marks', tabId),
+  conductorReady: () => ipcRenderer.invoke('conductor:ready'),
   agentSession: (sessionName) => ipcRenderer.invoke('agent:session', sessionName),
   diagnosePrepare: (opts) => ipcRenderer.invoke('diagnose:prepare', opts),
   copyText: (text) => ipcRenderer.send('clipboard:write', text),

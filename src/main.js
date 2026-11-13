@@ -57,7 +57,19 @@ function loadState() {
 
 function saveState(state) {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  // hook等の外部プロセスが読むので、書きかけを見せないようアトミックに置き換える
+  const tmp = `${STATE_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.renameSync(tmp, STATE_FILE);
+}
+
+// main側からのstate変更はディスクを直接更新し、レンダラーへpushして即時反映する
+function mutateState(fn) {
+  const state = loadState();
+  const result = fn(state);
+  saveState(state);
+  if (win && !win.isDestroyed()) win.webContents.send('state:reload', state);
+  return result;
 }
 
 app.setName('MimiTerm');
@@ -135,7 +147,23 @@ function createWindow() {
 }
 
 ipcMain.handle('state:load', () => loadState());
-ipcMain.on('state:save', (_e, state) => saveState(state));
+// レンダラーは手元のstateを丸ごと送ってくる。mainが付けた目印（agentMarks）は、レンダラーが
+// reloadを受け取る前の古いstateで上書きされると消えてしまうので、ディスク側との和集合で守る。
+// 目印を消す操作は 'agent:clear-marks' がmain側で行う
+ipcMain.on('state:save', (_e, state) => {
+  try {
+    const disk = loadState();
+    for (const tab of state.tabs || []) {
+      const marks = disk.tabs?.find((t) => t.id === tab.id)?.agentMarks;
+      if (marks?.length) tab.agentMarks = [...new Set([...(tab.agentMarks || []), ...marks])];
+    }
+    const conductor = (state.tabs || []).find((t) => t.id === state.conductorTabId);
+    if (conductor?.agentMarks?.length) delete state.conductorTabId;
+  } catch {
+    // マージに失敗しても保存自体は止めない
+  }
+  saveState(state);
+});
 
 ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialCommand }) => {
   if (ptys.has(tabId)) return 'exists';
@@ -221,6 +249,110 @@ ipcMain.handle('agent:session', (_e, sessionName) => {
     return null;
   }
 });
+
+// 非Claudeエージェントが動いたタブに、消えない目印（tab.agentMarks = [ラベル]）を付ける。
+// 登録ファイルは正常終了で消えるので、見つけた時点でstateへ写しておく。
+// 目印のあるタブは司令塔タブの対象外になる（scripts/conductor.py と conductor_status が参照）
+function syncAgentMarks(state) {
+  let files = [];
+  try {
+    files = fs.readdirSync(AGENT_SESSIONS_DIR).filter((f) => f.endsWith('.json'));
+  } catch {
+    return;
+  }
+  const found = []; // [tabId, label]
+  for (const file of files) {
+    const tab = state.tabs.find((t) => t.tmuxSession === file.replace(/\.json$/, ''));
+    if (!tab) continue;
+    let label = 'agent';
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(AGENT_SESSIONS_DIR, file), 'utf8'));
+      if (typeof j.label === 'string' && j.label.trim()) label = j.label.trim().slice(0, 40);
+    } catch {
+      // 壊れた登録でも「何かが動いた」事実は残す
+    }
+    if (!(tab.agentMarks || []).includes(label)) found.push([tab.id, label]);
+  }
+  if (!found.length) return;
+  mutateState((s) => {
+    for (const [tabId, label] of found) {
+      const tab = s.tabs.find((t) => t.id === tabId);
+      if (!tab) continue;
+      tab.agentMarks = [...new Set([...(tab.agentMarks || []), label])];
+      // 目印の付いたタブは司令塔になれない
+      if (s.conductorTabId === tabId) delete s.conductorTabId;
+    }
+  });
+}
+
+// ---------- 司令塔タブ ----------
+// タスクタブのイベントは Claude Code の hook（scripts/conductor.py）が events.jsonl へ書く。
+// アプリは「どのタブが司令塔か / 対象外か」をstateに持ち、MCPへ現況を返すだけ。
+const CONDUCTOR_DIR = path.join(STATE_DIR, 'conductor');
+const CONDUCTOR_EVENTS = path.join(CONDUCTOR_DIR, 'events.jsonl');
+ipcMain.handle('conductor:ready', () => fs.existsSync(path.join(CONDUCTOR_DIR, 'prompt.md')));
+ipcMain.handle('agent:clear-marks', (_e, tabId) =>
+  mutateState((state) => {
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (tab) delete tab.agentMarks;
+    return !!tab;
+  })
+);
+
+// ユーザーが今見ているタブ（ウィンドウ前面＋表示中）をhookへ伝える。見ているタブのイベントは司令塔へ流さない
+const CONDUCTOR_WATCHING = path.join(CONDUCTOR_DIR, 'watching');
+let lastWatching = null;
+function publishWatching(state) {
+  const watching = win && !win.isDestroyed() && win.isFocused() ? state.activeTabId || '' : '';
+  if (watching === lastWatching) return;
+  fs.mkdirSync(CONDUCTOR_DIR, { recursive: true });
+  fs.writeFileSync(CONDUCTOR_WATCHING, watching);
+  lastWatching = watching;
+}
+
+// 直近tickの稼働判定（MCPの conductor_status / list_tabs 用）
+let lastTick = { working: {}, paneCommands: {}, sessions: {} };
+
+// レンダラーの applyStatus と同じ区分をタブ単位で返す
+function tabRunState(tmuxSession) {
+  const cmd = lastTick.paneCommands[tmuxSession];
+  if (cmd === undefined) return null; // tmuxセッション無し
+  const isShell = !cmd || SHELL_CMDS.includes(cmd);
+  const isClaudeCmd = cmd === 'claude.exe' || cmd === 'claude' || cmd === 'node';
+  if (isShell) return 'shell';
+  if (!isClaudeCmd) return 'other-process';
+  if (lastTick.working[tmuxSession]) return 'working';
+  const info = lastTick.sessions[tmuxSession];
+  if (!info) return 'unknown';
+  return info.permissionMode === 'plan' ? 'plan-stopped' : 'waiting';
+}
+
+// タブごとの最新イベント（末尾64KBだけ読む）
+function latestConductorEvents() {
+  const latest = {};
+  try {
+    const st = fs.statSync(CONDUCTOR_EVENTS);
+    const size = Math.min(st.size, 65536);
+    const buf = Buffer.alloc(size);
+    const fd = fs.openSync(CONDUCTOR_EVENTS, 'r');
+    try {
+      fs.readSync(fd, buf, 0, size, st.size - size);
+    } finally {
+      fs.closeSync(fd);
+    }
+    for (const line of buf.toString('utf8').split('\n')) {
+      try {
+        const ev = JSON.parse(line);
+        if (ev && ev.tabId) latest[ev.tabId] = { kind: ev.kind, ts: ev.ts, message: String(ev.message || '').slice(0, 200) };
+      } catch {
+        // 途中から読んだ先頭行・空行は無視
+      }
+    }
+  } catch {
+    // イベント未発生
+  }
+  return latest;
+}
 
 // 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
 ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
@@ -978,7 +1110,16 @@ setInterval(async () => {
     }
   }
 
+  lastTick = { working, paneCommands, sessions };
+
   // ---- 通知とDockバッジ ----
+  // 司令塔まわりの失敗で、後続の通知・Dockバッジ・状態pushを巻き添えにしない
+  try {
+    syncAgentMarks(loadState());
+    publishWatching(loadState());
+  } catch (e) {
+    debugAppend(DEBUG_TICK_LOG, `CONDUCTOR ERROR: ${e.stack || e}`);
+  }
   const state = loadState();
   const notifEnabled = state.settings?.notifications !== false;
   let waitingCount = 0;
@@ -1091,14 +1232,9 @@ if (!app.requestSingleInstanceLock()) {
       getClaudeSessions: collectClaudeSessions,
       browser: browserOps,
       clipboard: { write: (text) => clipboard.writeText(text) },
-      // MCP経由の変更はディスクのstateを直接更新し、レンダラーへpushして即時反映する
-      mutateState: (fn) => {
-        const state = loadState();
-        const result = fn(state);
-        saveState(state);
-        if (win && !win.isDestroyed()) win.webContents.send('state:reload', state);
-        return result;
-      },
+      getTabRunState: tabRunState,
+      getConductorEvents: latestConductorEvents,
+      mutateState,
     });
   });
 }

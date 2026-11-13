@@ -220,10 +220,35 @@ function renderTab(tab, group) {
     tabEl.appendChild(emoji);
   }
 
+  if (tab.id === state.conductorTabId) {
+    tabEl.classList.add('conductor');
+    const mark = document.createElement('span');
+    mark.className = 'conductor-mark';
+    mark.textContent = '🎛';
+    mark.title = '司令塔タブ: 他のタブへ指示を出し、状況を集める';
+    tabEl.appendChild(mark);
+  }
+
   const name = document.createElement('span');
   name.className = 'tab-name';
   name.textContent = tab.name;
   tabEl.appendChild(name);
+
+  // Claude以外のエージェントが動いたことのあるタブの目印（消えない）。司令塔の対象外になる
+  for (const label of tab.agentMarks || []) {
+    const mark = document.createElement('span');
+    mark.className = 'agent-mark';
+    mark.textContent = label.slice(0, 1).toUpperCase();
+    mark.title = `${label} が動作したタブ（司令塔の対象外）`;
+    tabEl.appendChild(mark);
+  }
+  if (tab.conductorExcluded && !tab.agentMarks?.length) {
+    const mark = document.createElement('span');
+    mark.className = 'agent-mark manual';
+    mark.textContent = '⊘';
+    mark.title = '司令塔の対象外に指定したタブ';
+    tabEl.appendChild(mark);
+  }
 
   if (tab.scheduledFor) {
     const due = tab.scheduledFor <= localToday();
@@ -256,6 +281,10 @@ function renderTab(tab, group) {
   tabEl.appendChild(closeBtn);
 
   tabEl.addEventListener('click', () => activateTab(tab.id));
+  tabEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showTabMenu(tab, e.clientX, e.clientY);
+  });
   attachHoverPreview(tabEl, tab);
   name.addEventListener('dblclick', (e) => {
     e.stopPropagation();
@@ -293,6 +322,74 @@ function renderTab(tab, group) {
   });
 
   return tabEl;
+}
+
+// タブの右クリックメニュー（司令塔まわりの指定）
+const tabMenuEl = document.createElement('div');
+tabMenuEl.id = 'tab-menu';
+tabMenuEl.className = 'hidden';
+document.body.appendChild(tabMenuEl);
+document.addEventListener('click', () => tabMenuEl.classList.add('hidden'));
+window.addEventListener('blur', () => tabMenuEl.classList.add('hidden'));
+
+function showTabMenu(tab, x, y) {
+  const tabId = tab.id;
+  const excluded = !!(tab.agentMarks?.length || tab.conductorExcluded);
+  const isConductor = state.conductorTabId === tabId;
+  // メニュー表示中にstateがreloadされるとタブのオブジェクトが入れ替わるので、実行時に引き直す
+  const apply = (fn) => () => {
+    const current = state.tabs.find((t) => t.id === tabId);
+    if (!current) return;
+    fn(current);
+    save();
+    render();
+  };
+  const items = [];
+  if (isConductor) {
+    items.push(['🎛 司令塔を解除', apply(() => delete state.conductorTabId)]);
+  } else if (!excluded) {
+    items.push([
+      '🎛 このタブを司令塔にする',
+      apply((t) => {
+        if (!t.agentMarks?.length && !t.conductorExcluded) state.conductorTabId = tabId;
+      }),
+    ]);
+  }
+  if (tab.conductorExcluded) {
+    items.push(['司令塔の対象に戻す', apply((t) => delete t.conductorExcluded)]);
+  } else if (!tab.agentMarks?.length) {
+    items.push([
+      '⊘ 司令塔の対象外にする',
+      apply((t) => {
+        t.conductorExcluded = true;
+        if (state.conductorTabId === tabId) delete state.conductorTabId;
+      }),
+    ]);
+  }
+  if (tab.agentMarks?.length) {
+    items.push([
+      `目印を消す（${tab.agentMarks.join(', ')}）`,
+      () => {
+        const ok = confirm(
+          `「${tab.name}」の目印を消すと、このタブは司令塔の対象に戻ります。\n` +
+            'エージェントが動作中、または異常終了して登録が残っている間は、目印はすぐに付き直します。よろしいですか？'
+        );
+        // 目印はmain側が持つ（レンダラーの保存では消えない）ので、mainに消してもらう
+        if (ok) window.mimi.clearAgentMarks(tabId);
+      },
+    ]);
+  }
+  tabMenuEl.replaceChildren(
+    ...items.map(([label, run]) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.addEventListener('click', run);
+      return btn;
+    })
+  );
+  tabMenuEl.classList.remove('hidden');
+  tabMenuEl.style.left = `${Math.min(x, window.innerWidth - tabMenuEl.offsetWidth - 8)}px`;
+  tabMenuEl.style.top = `${Math.min(y, window.innerHeight - tabMenuEl.offsetHeight - 8)}px`;
 }
 
 function moveTabRelative(draggedId, targetTab, before) {
@@ -557,6 +654,7 @@ function removeTab(tab, killSession) {
   // 先に状態から消す（ターミナル破棄が例外を投げてもタブがサイドバーに残らないように）
   state.tabs = state.tabs.filter((t) => t.id !== tab.id);
   if (state.activeTabId === tab.id) state.activeTabId = null;
+  if (state.conductorTabId === tab.id) delete state.conductorTabId;
   const entry = terms.get(tab.id);
   terms.delete(tab.id);
   if (killSession) window.mimi.killTmuxSession(tab.tmuxSession);
@@ -766,6 +864,40 @@ pinnedTabButton.addEventListener('click', async () => {
   render();
   await autoTrustCwd();
   await activateTab(tab.id, pin.command);
+});
+
+// 🎛司令塔ボタン: 司令塔タブへ切り替える。無ければ作成し、司令塔用の指示を付けてClaudeを起動する。
+// 指示文とイベント受信スクリプトは `scripts/setup.sh conductor` が ~/.mimiterm/conductor/ へ配置する
+const CONDUCTOR_COMMAND =
+  'claude -n conductor --append-system-prompt "$(cat ~/.mimiterm/conductor/prompt.md)" "司令塔モードを開始して"';
+
+document.getElementById('conductor-tab').addEventListener('click', async () => {
+  const existing = state.tabs.find((t) => t.id === state.conductorTabId);
+  if (existing) {
+    await activateTab(existing.id);
+    setTimeout(async () => {
+      const probe = await window.mimi.tmuxProbe(existing.tmuxSession);
+      if (probe.exists && PLAIN_SHELLS.has(probe.command)) {
+        showToast('司令塔タブでClaudeが動いてないみたい', {
+          label: '▶ 司令塔を起動',
+          run: () => window.mimi.ptyInput(existing.id, `${CONDUCTOR_COMMAND}\r`),
+        });
+      }
+    }, 800);
+    return;
+  }
+  if (!(await window.mimi.conductorReady())) {
+    showToast('司令塔の準備がまだだよ。リポジトリで scripts/setup.sh conductor を実行してね');
+    return;
+  }
+  // cwdは渡さない＝ホームディレクトリ起動（リポジトリ配下のsandbox巻き込み防止）
+  const tab = { id: uid('t'), name: '司令塔', groupId: currentGroupId(), tmuxSession: uid('mimi') };
+  state.tabs.push(tab);
+  state.conductorTabId = tab.id;
+  save();
+  render();
+  await autoTrustCwd();
+  await activateTab(tab.id, CONDUCTOR_COMMAND);
 });
 
 // 背景画像設定（MCPのset_backgroundから変更される）

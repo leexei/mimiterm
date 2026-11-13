@@ -10,7 +10,7 @@ const { autoTabName } = require('./tab-name');
 
 const CONFIG_FILE = path.join(os.homedir(), '.mimiterm', 'mcp.json');
 const DEFAULT_PORT = 48237;
-const SERVER_VERSION = '0.5.0';
+const SERVER_VERSION = '0.6.0';
 
 function loadConfig() {
   try {
@@ -45,6 +45,9 @@ function resolveGroup(state, ref) {
   );
 }
 
+// 司令塔タブの対象外: 非Claudeエージェントが動いたタブ（agentMarks）か、手動で対象外にしたタブ
+const isConductorExcluded = (tab) => !!(tab.agentMarks?.length || tab.conductorExcluded);
+
 function tabSummary(state, tab, claudeSessions) {
   const info = claudeSessions[tab.tmuxSession];
   const group = state.groups.find((g) => g.id === tab.groupId);
@@ -62,6 +65,9 @@ function tabSummary(state, tab, claudeSessions) {
     badge: tab.badgeEmoji ?? null,
     scheduledFor: tab.scheduledFor ?? null,
     dueToday: !!(tab.scheduledFor && tab.scheduledFor <= new Date().toLocaleDateString('sv-SE')),
+    agentMarks: tab.agentMarks ?? [],
+    conductor: state.conductorTabId === tab.id,
+    conductorExcluded: isConductorExcluded(tab),
   };
 }
 
@@ -73,6 +79,7 @@ const TOOLS = [
     name: 'list_tabs',
     description:
       'MimiTerm の全グループと全タブの一覧を返す。各タブの Claude コンテキスト使用率(contextPct)・セッションID・再開予定日(scheduledFor)・バッジも含む。タブ棚卸しはまずこれを呼ぶ。' +
+      'agentMarks は、そのタブで動いたことのある Claude 以外のエージェント名（目印）。' +
       "link はクリックでそのタブへ切り替わるリンク。ターミナルへは printf '\\e]8;;<link>\\e\\\\表示テキスト\\e]8;;\\e\\\\\\n' のように OSC 8 で貼る。",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (args, ctx) => {
@@ -236,6 +243,96 @@ const TOOLS = [
         if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
         tab.badgeEmoji = args.badge ? String(args.badge).slice(0, 4) : null;
         return { ok: true, tab: tab.name, badge: tab.badgeEmoji };
+      }),
+  },
+  {
+    name: 'conductor_status',
+    description:
+      '司令塔タブ用: 指示してよいタブの現況をまとめて返す。state は working(作業中) / waiting(応答待ち) / plan-stopped(planモードで停止) / shell / other-process。' +
+      'lastEvent はそのタブで直近に起きたイベント（許可待ち・質問待ち・ターン終了など）。' +
+      'tmuxSession を ListAgents の「tmux <セッション名>」と突き合わせると SendMessage の宛先が分かる。' +
+      'excluded は対象外タブ（Claude以外のエージェントが動いたタブ等）。対象外タブへは指示を送らず、中身も読まないこと。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_args, ctx) => {
+      const state = ctx.getState();
+      const sessions = ctx.getClaudeSessions();
+      const events = ctx.getConductorEvents();
+      const conductor = state.tabs.find((t) => t.id === state.conductorTabId) || null;
+      const groupName = (tab) => state.groups.find((g) => g.id === tab.groupId)?.name ?? null;
+      const tabs = [];
+      const excluded = [];
+      for (const tab of state.tabs) {
+        if (conductor && tab.id === conductor.id) continue;
+        if (isConductorExcluded(tab)) {
+          excluded.push({
+            name: tab.name,
+            tmuxSession: tab.tmuxSession,
+            reason: tab.agentMarks?.length ? `${tab.agentMarks.join(', ')} が動作したタブ` : 'ユーザーが対象外に指定',
+          });
+          continue;
+        }
+        const runState = ctx.getTabRunState(tab.tmuxSession);
+        const lastEvent = events[tab.id] ?? null;
+        tabs.push({
+          id: tab.id,
+          name: tab.name,
+          group: groupName(tab),
+          tmuxSession: tab.tmuxSession,
+          link: `mimiterm://tab/${tab.id}`,
+          state: runState,
+          contextPct: sessions[tab.tmuxSession]?.pct ?? null,
+          active: state.activeTabId === tab.id,
+          // 作業を再開したタブの古いイベントは、もう止まっていないので出さない
+          lastEvent: runState === 'working' ? null : lastEvent,
+        });
+      }
+      return {
+        conductor: conductor ? { id: conductor.id, name: conductor.name, tmuxSession: conductor.tmuxSession } : null,
+        tabs,
+        excluded,
+      };
+    },
+  },
+  {
+    name: 'set_conductor_tab',
+    description:
+      'タブを司令塔タブとして登録する（1つだけ。登録するとタスクタブのイベントが司令塔へ流れ始める）。tab に空文字で解除。対象外タブは登録できない。',
+    inputSchema: {
+      type: 'object',
+      properties: { tab: { type: 'string', description: `${TAB_REF_DESC}。空文字で解除` } },
+      required: ['tab'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) =>
+      ctx.mutateState((state) => {
+        if (!args.tab) {
+          delete state.conductorTabId;
+          return { ok: true, conductor: null };
+        }
+        const tab = resolveTab(state, args.tab);
+        if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
+        if (isConductorExcluded(tab)) throw new Error(`対象外タブは司令塔にできません: ${tab.name}`);
+        state.conductorTabId = tab.id;
+        return { ok: true, conductor: { id: tab.id, name: tab.name } };
+      }),
+  },
+  {
+    name: 'exclude_tab_from_conductor',
+    description:
+      'タブを司令塔の対象外にする（イベントが流れなくなり、指示対象からも外れる）。解除はユーザーがタブの右クリックメニューから行う（このツールでは解除できない）。',
+    inputSchema: {
+      type: 'object',
+      properties: { tab: { type: 'string', description: TAB_REF_DESC } },
+      required: ['tab'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) =>
+      ctx.mutateState((state) => {
+        const tab = resolveTab(state, args.tab);
+        if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
+        tab.conductorExcluded = true;
+        if (state.conductorTabId === tab.id) delete state.conductorTabId;
+        return { ok: true, tab: tab.name, conductorExcluded: true };
       }),
   },
   {

@@ -115,9 +115,75 @@ else:
 EOF
 }
 
+step_conductor() {
+  echo "== conductor: 司令塔タブ用のhookと指示文を配置 =="
+  python3 - "$REPO_DIR" <<'EOF'
+import json, os, shlex, shutil, sys
+repo = sys.argv[1]
+if '.wt/' in repo + '/':
+    sys.exit('NG: worktree から実行されています。hookに消えるパスが登録されるので、メインのリポジトリから実行してください')
+cdir = os.path.expanduser('~/.mimiterm/conductor')
+os.makedirs(cdir, exist_ok=True)
+# 司令塔のClaudeが固定パスで参照できるよう、リポジトリのスクリプトへリンクを張る
+for name, src in (('conductor.py', 'scripts/conductor.py'), ('prompt.md', 'scripts/conductor-prompt.md')):
+    link = os.path.join(cdir, name)
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(os.path.join(repo, src), link)
+cfg = os.path.join(cdir, 'config.json')
+if not os.path.exists(cfg):
+    with open(cfg, 'w') as f:
+        json.dump({'denyPatterns': []}, f, indent=2)
+    print(f'設定ファイル作成: {cfg}（denyPatterns に、司令塔に読ませたくないパスの一部を書く）')
+
+# シンボリックリンクで管理されている場合に、リンクを実ファイルで置き換えない
+p = os.path.realpath(os.path.expanduser('~/.claude/settings.json'))
+d = json.load(open(p)) if os.path.exists(p) else {}
+# スクリプトが見つからない時に python3 が返す exit 2 は、Claude Code では「ブロック」扱いになり
+# 全セッションのツール実行が止まる。hookの失敗は必ず握りつぶす
+cmd = f'python3 {shlex.quote(repo + "/scripts/conductor.py")} hook || true'
+hooks = d.setdefault('hooks', {})
+wanted = {
+    'Notification': None,
+    'Stop': None,
+    # 質問・プラン承認の検知と、司令塔タブの読み取りガード
+    'PreToolUse': 'AskUserQuestion|ExitPlanMode|Read|Bash|Grep|Glob|Monitor',
+}
+changed = False
+for event, matcher in wanted.items():
+    entries = hooks.setdefault(event, [])
+    ours = [h for e in entries for h in e.get('hooks', []) if 'conductor.py' in h.get('command', '') and ' hook' in h.get('command', '')]
+    if ours:
+        # 登録済み。リポジトリを移動した後の再実行でパスを直せるよう、コマンドは更新する
+        for h in ours:
+            if h.get('command') != cmd:
+                h['command'] = cmd
+                changed = True
+        continue
+    entry = {'hooks': [{'type': 'command', 'command': cmd, 'timeout': 10}]}
+    if matcher:
+        entry['matcher'] = matcher
+    entries.append(entry)
+    changed = True
+if changed:
+    backup = p + '.mimiterm-backup'
+    if os.path.exists(p) and not os.path.exists(backup):
+        shutil.copy(p, backup)
+    tmp = p + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    print('OK: Notification / Stop / PreToolUse hookを登録・更新しました（新しいセッションから有効）')
+else:
+    print('OK: hookは登録済み')
+print('次: MimiTermのサイドバー「🎛 司令塔」を押すと司令塔タブが起動します')
+EOF
+}
+
 case "${1:-all}" in
   deps) step_deps ;;
   autoschedule) step_autoschedule ;;
+  conductor) step_conductor ;;
   build) step_build ;;
   app) step_app ;;
   statusline) step_statusline ;;
@@ -130,5 +196,5 @@ case "${1:-all}" in
     echo
     echo "次: MimiTerm.app を起動してから 'scripts/setup.sh mcp' を実行してください"
     ;;
-  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|autoschedule|all>"; exit 1 ;;
+  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|autoschedule|conductor|all>"; exit 1 ;;
 esac

@@ -20,7 +20,9 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **埋め込みブラウザ**: SSOセッション永続のブラウザペイン。選択テキストをClaude入力欄へ引用注入
 - **ハンドオフ**: ターミナル下部のステータスバーに現在タブのコンテキスト使用率と「🔀 ハンドオフ」ボタン。70%を超えるとボタンが強調表示され、押すと「スナップショットを書いて新しいタブへ引き継ぐ」依頼がClaudeへ送られる（新タブ作成はMCPの `create_tab` が担う）
 - **回答のクリーンコピー**: ステータスバーの「📋 回答をコピー」で直近のClaudeの回答をクリップボードへ。画面の選択範囲ではなく **transcript（JSONL）の生テキスト**を使うため、レンダラーが付ける行頭スペース・`⏺`/`⎿`・表の罫線・折り返し改行・NBSPが一切混ざらない。クリック=末尾のコードブロック、Shift+クリック=回答全文
-- **内蔵MCPサーバー（20ツール）**: タブ作成・整理・スケジュール・外観・ブラウザの読取/クリック/入力/ブックマーク・クリップボード書き込みをClaudeから操作可能
+- **司令塔タブ**（任意・`setup.sh conductor` で有効化）: 1つのタブを司令塔にして、そこのClaudeから他のタブのClaudeへ仕事を振り、各タブの「許可待ち・質問待ち・プラン承認待ち・ターン終了」を集めて説明させる（後述）
+- **エージェントの目印**: Claude以外のエージェントCLIが動いたことのあるタブに、消えない目印（ラベルの頭文字）を付ける。目印のあるタブは司令塔の対象外になる
+- **内蔵MCPサーバー（23ツール）**: タブ作成・整理・スケジュール・外観・ブラウザの読取/クリック/入力/ブックマーク・クリップボード書き込みをClaudeから操作可能
 
 ## 前提条件
 
@@ -49,6 +51,8 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | statusline | `~/.claude/settings.json` のstatusLineをtapに変更 | 変更内容: (1) 初回のみ `settings.json.mimiterm-backup` を作成 (2) 既存statuslineがあればチェーン先（`~/.mimiterm/statusline-chain.sh`）に退避して表示を維持 (3) statusLine.commandをtapに書き換え |
 | mcp | `claude mcp add --scope user` でMimiTerm MCPを登録 | user scopeのMCP設定に `mimiterm` が追加される |
 | autoschedule（任意） | `~/.claude/settings.json` の `hooks.Stop` にタブ自動整理フックを追加 | 応答完了時にMimiTermのタブが自動で日付グループへ移動する。`all` には含まれないので必要な人だけ実行 |
+
+| conductor（任意） | 司令塔タブ用のhook（`Notification` / `Stop` / `PreToolUse`）を `~/.claude/settings.json` に追加し、`~/.mimiterm/conductor/` に指示文とスクリプトへのリンクを置く | 司令塔タブが登録されている間だけ、各タブのイベントが `~/.mimiterm/conductor/events.jsonl` に書かれる。`all` には含まれない |
 
 セットアップ後、AIはユーザーに以下を伝えること:
 - Gatekeeperに「開発元を確認できない」と言われたら: 右クリック→開く、または `xattr -dr com.apple.quarantine /Applications/MimiTerm.app`
@@ -83,6 +87,35 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 - **エージェントが動いている間だけ置き、正常終了したら消す**運用にすること。ファイルがあれば `claude --resume` より優先される
 - `resumeCommand` は1行のみ（改行を含むと無視）。提案トーストのボタンを押した時だけ `cd <cwd> && <resumeCommand>` がタブに入力される
 
+このファイルが見つかったタブには、ラベルを記録した**目印**が付く（`state.json` の `tab.agentMarks`）。登録ファイルが消えた後も目印は残り、そのタブは司令塔の対象外になる。消すのはタブの右クリックメニューから。
+
+### 司令塔タブ
+
+ユーザーは司令塔タブだけを見て、各タブの仕事は司令塔のClaudeに振ってもらう、という使い方のための機能。
+
+```sh
+scripts/setup.sh conductor   # hookの登録と ~/.mimiterm/conductor/ の配置
+```
+
+その後、サイドバーの「🎛 司令塔」を押すと司令塔タブが作られ、司令塔用の指示（`scripts/conductor-prompt.md`）を付けてClaudeが起動する。既存のタブを司令塔にする時は、タブを右クリック→「このタブを司令塔にする」。
+
+仕組み:
+
+| 向き | 手段 |
+|------|------|
+| 司令塔 → タスクタブ（指示） | Claude Code のセッション間メッセージ（`SendMessage`）。MimiTermはターミナルへ文字を流し込まない |
+| タスクタブ → 司令塔（結果の報告） | 同じくセッション間メッセージの返信 |
+| タスクタブ → 司令塔（止まった・終わったの通知） | hook（`scripts/conductor.py hook`）が `events.jsonl` に追記し、司令塔が `conductor.py wait` をバックグラウンドで回して受け取る |
+
+- 通知されるのは: ツールの許可ダイアログ待ち / 選択式の質問待ち / プラン承認待ち / 入力待ち / ターン終了（最後の応答の末尾700文字つき）
+- 通知されないタブ: 司令塔自身、対象外タブ、ユーザーが今見ているタブ（ウィンドウが前面で、そのタブを表示中）。司令塔タブが未登録の間は何も書かれない
+- 司令塔はダイアログを代わりに押せない。どのタブが何で止まっているかを伝えるところまでで、選択は人間がそのタブで行う
+- セッション間メッセージは、受け手のセッションの権限モードによっては承認待ちで保留される（Claude Code 側の仕様。`crossSessionInbound` 設定を参照）
+
+**対象外タブ**（エージェントの目印があるタブ、または右クリックで対象外にしたタブ）は、イベントが流れず、`conductor_status` でも名前と理由しか返らない。さらに司令塔タブでは、対象外タブのtmuxセッション名・ClaudeセッションID・`~/.mimiterm/conductor/config.json` の `denyPatterns`（パスの一部。例: `["/.someagent/"]`）を含む `Read` / `Bash` / `Grep` / `Glob` / `Monitor` の呼び出しをhookが拒否する。`denyPatterns` は4文字以上のものだけ有効。これは文字列一致による歯止めであり、完全な隔離ではない（広い範囲の検索や、対象外ツール経由の読み取りまでは防げない）。
+
+やめる時は `~/.claude/settings.json` の `hooks` から `conductor.py hook` を含む項目を消す（初回変更時のバックアップは `settings.json.mimiterm-backup`）。
+
 ### 今日パネルの予定データ（`~/.mimiterm/calendar-cache.json`）
 
 アプリはカレンダーAPIへ直接アクセスしない。予定の取得は外部ツール（Claude セッションの Google Calendar 連携、cron スクリプト等）が行い、以下の形式でこのファイルへ書く。アプリは1分毎に読み直し、`date` が今日でないキャッシュは無視する（ファイルが無ければパネルのカレンダー部は非表示）。
@@ -105,6 +138,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 ## MCPツール一覧（Claudeから使える操作）
 
 - タブ系: `list_tabs`（dueToday/contextPct/タブリンク`link`等付き） / `create_tab`（起動コマンド指定可・ハンドオフ用） / `rename_tab` / `create_group` / `move_tab_to_group` / `collapse_group` / `set_tab_badge` / `schedule_tab` / `set_background`
+- 司令塔系: `conductor_status`（指示してよいタブの現況と直近イベント、対象外タブの一覧） / `set_conductor_tab` / `exclude_tab_from_conductor`（対象外にするのみ。解除はUIから）
 - ブラウザ系: `browser_navigate` / `browser_get_page` / `browser_get_selection` / `browser_get_styles`（セルの計算済み背景色） / `browser_click` / `browser_type` / `browser_screenshot` / `bookmark_list` / `bookmark_add` / `bookmark_remove`
 - その他: `copy_to_clipboard`（貼り付け用の文面をターミナル表示を経由せずクリップボードへ）
 
