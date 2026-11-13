@@ -117,6 +117,22 @@ function renderGroup(group) {
   name.textContent = group.name;
   header.appendChild(name);
 
+  // 折りたたむと見出しも期限切れの赤も隠れるので、再開日が来ているタブの件数を見出しの右側に出す
+  const groupTabs = state.tabs.filter((t) => t.groupId === group.id);
+  if (group.collapsed) {
+    const today = localToday();
+    const dueCount = groupTabs.filter((t) => MimiSchedule.isDue(t.scheduledFor, today)).length;
+    const overdueCount = groupTabs.filter((t) => MimiSchedule.sectionOf(t.scheduledFor, today).overdue).length;
+    if (dueCount > 0) {
+      const due = document.createElement('span');
+      due.className = 'group-due' + (overdueCount > 0 ? ' overdue' : '');
+      due.textContent = `⏰${dueCount}`;
+      due.title =
+        `再開予定日が来ているタブ ${dueCount}件` + (overdueCount > 0 ? `（うち期限切れ ${overdueCount}件）` : '');
+      header.appendChild(due);
+    }
+  }
+
   const addTabBtn = iconButton('＋', 'タブを追加', (e) => {
     e.stopPropagation();
     createTab(group.id);
@@ -150,14 +166,11 @@ function renderGroup(group) {
   tabsEl.className = 'tabs';
   // グループ内を再開予定日で区切る（今日/明日/今週/それ以降/未定）。並びは表示だけで、state.tabs の順序は変えない。
   // 予定日つきのタブが1つも無いグループは「未定」だけになるので、見出しを出さず従来どおりに並べる
-  const sections = MimiSchedule.splitIntoSections(
-    state.tabs.filter((t) => t.groupId === group.id),
-    localToday()
-  );
+  const sections = MimiSchedule.splitIntoSections(groupTabs, localToday());
   const showHeadings = sections.some((s) => s.key !== 'unscheduled');
   for (const section of sections) {
     if (showHeadings) tabsEl.appendChild(renderSectionHeading(section));
-    for (const tab of section.tabs) tabsEl.appendChild(renderTab(tab, group));
+    for (const tab of section.tabs) tabsEl.appendChild(renderTab(tab, group, section.key));
   }
   groupEl.appendChild(tabsEl);
 
@@ -229,7 +242,7 @@ function moveGroupRelative(draggedId, targetGroup, before) {
   render();
 }
 
-function renderTab(tab, group) {
+function renderTab(tab, group, sectionKey) {
   const entry = terms.get(tab.id);
   const tabEl = document.createElement('div');
   tabEl.className =
@@ -297,7 +310,10 @@ function renderTab(tab, group) {
         : tab.scheduledFor.replace(/-/g, '/');
       const chip = document.createElement('span');
       chip.className = 'schedule-chip' + (overdue ? ' overdue' : due ? ' due' : '');
-      chip.textContent = shownByGroup && !overdue ? '⏰' : `${due ? '⏰' : '⏳'}${label}`;
+      // 「今日」「明日」の見出しの下では日付が見出しと重複するので絵文字だけにして、タブ名の幅を空ける。
+      // 期限切れは、いつの予定だったかが要るので日付を残す
+      const dateInHeading = !overdue && (sectionKey === 'today' || sectionKey === 'tomorrow');
+      chip.textContent = (shownByGroup || dateInHeading) && !overdue ? (due ? '⏰' : '⏳') : `${due ? '⏰' : '⏳'}${label}`;
       chip.title = overdue
         ? `再開予定日を過ぎています: ${tab.scheduledFor}`
         : due

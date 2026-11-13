@@ -18,6 +18,10 @@ const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
 // GUI起動時はbrewのPATHを継承しないため、tmuxは既知パスから解決する
 const TMUX_CANDIDATES = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
+// tmux は必ず -u（UTF-8を強制）を付けて呼ぶこと。
+// Finder / Dock から起動したアプリには LANG 等のロケール環境変数が無く、-u なしの tmux クライアントは
+// 非UTF-8扱いになって、list-panes 等の出力中のタブ文字を '_' に置き換える。区切り（タブ文字）が壊れると
+// 全タブの稼働状態（サイドバーの●/✳、conductor_status の state）が取れなくなる
 const TMUX = TMUX_CANDIDATES.find((p) => fs.existsSync(p)) || 'tmux';
 
 // 同期出力(DECSET 2026)を外側ターミナル(=MimiTerm)へ通すようtmuxへ宣言する。
@@ -31,7 +35,7 @@ function ensureTmuxConf() {
 }
 function applyTmuxSyncFeature() {
   // 既に起動中のtmuxサーバーにも反映（サーバー未起動ならエラーになるだけなので無視）
-  execFile(TMUX, ['set', '-s', 'terminal-features', TMUX_TERMINAL_FEATURES], () => {});
+  execFile(TMUX, ['-u', 'set', '-s', 'terminal-features', TMUX_TERMINAL_FEATURES], () => {});
 }
 
 const ptys = new Map(); // tabId -> IPty
@@ -172,7 +176,7 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
   const claudeModel = loadState().settings?.claudeModel || null;
   const modelArgs = claudeModel ? ['-e', `ANTHROPIC_MODEL=${claudeModel}`] : [];
   ensureTmuxConf();
-  const p = pty.spawn(TMUX, ['-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession], {
+  const p = pty.spawn(TMUX, ['-u', '-f', TMUX_CONF, 'new-session', '-A', ...modelArgs, '-s', tmuxSession], {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
@@ -187,7 +191,7 @@ ipcMain.handle('pty:create', (_e, { tabId, tmuxSession, cols, rows, initialComma
   if (initialCommand) {
     // セッション生成直後はシェル起動前なので、少し待ってから send-keys で流し込む
     setTimeout(() => {
-      execFile(TMUX, ['send-keys', '-t', tmuxSession, initialCommand, 'Enter'], () => {});
+      execFile(TMUX, ['-u', 'send-keys', '-t', tmuxSession, initialCommand, 'Enter'], () => {});
     }, 700);
   }
   p.onData((data) => {
@@ -223,7 +227,7 @@ ipcMain.on('pty:kill', (_e, { tabId }) => {
 // タブ復旧トリアージ用: セッションの有無と前面プロセス名を1回で返す
 ipcMain.handle('tmux:probe', (_e, sessionName) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
+    execFile(TMUX, ['-u', 'display-message', '-p', '-t', sessionName, '#{pane_current_command}'], (err, stdout) => {
       if (err) resolve({ exists: false, command: null });
       else resolve({ exists: true, command: String(stdout).trim() });
     });
@@ -357,7 +361,7 @@ function latestConductorEvents() {
 // 🆘診断用: 壊れたタブの状況をmdに書き出し、別タブのClaudeに渡すためのファイルパスを返す
 ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId }) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
+    execFile(TMUX, ['-u', 'capture-pane', '-p', '-t', tmuxSession, '-S', '-50'], (err, stdout) => {
       const capture = err ? `(capture-pane 失敗: ${err.message})` : String(stdout).replace(/\s+$/, '');
       const file = path.join(STATE_DIR, 'diagnose', `${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -397,7 +401,7 @@ ipcMain.handle('diagnose:prepare', (_e, { tabName, tmuxSession, claudeSessionId 
 // ホバープレビュー用: セッションの現在画面をテキストで取得（LLM不要・低コスト）
 ipcMain.handle('tmux:capture', (_e, sessionName) => {
   return new Promise((resolve) => {
-    execFile(TMUX, ['capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
+    execFile(TMUX, ['-u', 'capture-pane', '-p', '-t', sessionName, '-S', '-5'], (err, stdout) => {
       if (err) {
         resolve(null);
         return;
@@ -408,7 +412,7 @@ ipcMain.handle('tmux:capture', (_e, sessionName) => {
 });
 
 ipcMain.on('tmux:kill-session', (_e, name) => {
-  execFile(TMUX, ['kill-session', '-t', name], () => {});
+  execFile(TMUX, ['-u', 'kill-session', '-t', name], () => {});
   fs.rm(path.join(SESSIONS_DIR, `${name}.json`), { force: true }, () => {});
 });
 
@@ -992,6 +996,7 @@ function debugAppend(file, msg) {
 }
 ipcMain.on('debug:log', (_e, msg) => debugAppend(DEBUG_RENDERER_LOG, msg));
 
+let warnedPaneFormat = false;
 setInterval(async () => {
   try {
   if (!win || win.isDestroyed()) {
@@ -1000,6 +1005,7 @@ setInterval(async () => {
   }
   const tickStart = Date.now(); // 一時デバッグ計装
   const out = await execFileP(TMUX, [
+    '-u',
     'list-panes',
     '-a',
     '-F',
@@ -1011,6 +1017,14 @@ setInterval(async () => {
   if (out) {
     for (const line of out.trim().split('\n')) {
       const [sess, at, cmd, pid] = line.split('\t');
+      if (pid === undefined) {
+        // 区切りのタブ文字が届いていない（tmuxが非UTF-8扱いで置き換えた等）。黙って全タブの状態を失わないよう一度だけ知らせる
+        if (!warnedPaneFormat) {
+          warnedPaneFormat = true;
+          console.warn(`[MimiTerm] tmux list-panes の出力を区切れません: ${JSON.stringify(line.slice(0, 120))}`);
+        }
+        continue;
+      }
       if (sess && sess.startsWith('mimi-')) {
         activity[sess] = Number(at) * 1000;
         paneCommands[sess] = cmd || null;
