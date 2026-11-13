@@ -32,6 +32,8 @@ const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().to
 function resolveTab(state, ref) {
   return (
     state.tabs.find((t) => t.id === ref) ||
+    // 同名のセッションがローカルとリモートにあれば、ローカルのタブを優先
+    state.tabs.find((t) => !t.remote && t.tmuxSession === ref) ||
     state.tabs.find((t) => t.tmuxSession === ref) ||
     state.tabs.find((t) => t.name === ref) ||
     state.tabs.find((t) => t.name.toLowerCase() === String(ref).toLowerCase())
@@ -61,7 +63,8 @@ function scheduleInfo(tab, today = todayStr()) {
 const isConductorExcluded = (tab) => !!(tab.agentMarks?.length || tab.conductorExcluded);
 
 function tabSummary(state, tab, claudeSessions) {
-  const info = claudeSessions[tab.tmuxSession];
+  // Claude セッション情報はローカルの tmux セッション名で引く。同名のリモートタブに混ぜない
+  const info = tab.remote ? undefined : claudeSessions[tab.tmuxSession];
   const group = state.groups.find((g) => g.id === tab.groupId);
   return {
     id: tab.id,
@@ -69,6 +72,7 @@ function tabSummary(state, tab, claudeSessions) {
     group: group ? group.name : null,
     groupId: tab.groupId,
     tmuxSession: tab.tmuxSession,
+    remoteHost: tab.remote?.host ?? null, // リモートタブなら ssh 先（tmux 操作は ssh 越しに）
     link: `mimiterm://tab/${tab.id}`,
     active: state.activeTabId === tab.id,
     claudeSessionId: tab.claudeSessionId ?? info?.sessionId ?? null,
@@ -266,7 +270,7 @@ const TOOLS = [
       'scheduledFor は再開予定日(YYYY-MM-DD、未設定は null)。scheduleSection はサイドバーの区切り（today / tomorrow / this-week=明後日〜7日後 / later / unscheduled=予定日なし）、' +
       'overdue は予定日を過ぎたタブ（today に入る）。today は判定に使った今日の日付。' +
       'tmuxSession を ListAgents の「tmux <セッション名>」と突き合わせると SendMessage の宛先が分かる。' +
-      'excluded は対象外タブ（Claude以外のエージェントが動いたタブ等）。対象外タブへは指示を送らず、中身も読まないこと。',
+      'excluded は対象外タブ（Claude以外のエージェントが動いたタブ、ssh 先のリモートタブ等）。対象外タブへは指示を送らず、中身も読まないこと。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (_args, ctx) => {
       const state = ctx.getState();
@@ -279,6 +283,16 @@ const TOOLS = [
       const excluded = [];
       for (const tab of state.tabs) {
         if (conductor && tab.id === conductor.id) continue;
+        if (tab.remote) {
+          // リモートタブ（ssh 先の tmux）は稼働状態もイベントも取れないので、指示対象に含めない
+          excluded.push({
+            name: tab.name,
+            tmuxSession: tab.tmuxSession,
+            remoteHost: tab.remote.host,
+            reason: 'リモートタブ（ssh 先の tmux。稼働状態を取れない）',
+          });
+          continue;
+        }
         if (isConductorExcluded(tab)) {
           excluded.push({
             name: tab.name,
@@ -330,6 +344,7 @@ const TOOLS = [
         const tab = resolveTab(state, args.tab);
         if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
         if (isConductorExcluded(tab)) throw new Error(`対象外タブは司令塔にできません: ${tab.name}`);
+        if (tab.remote) throw new Error(`リモートタブは司令塔にできません: ${tab.name}`);
         state.conductorTabId = tab.id;
         return { ok: true, conductor: { id: tab.id, name: tab.name } };
       }),

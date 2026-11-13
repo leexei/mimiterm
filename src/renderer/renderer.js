@@ -390,7 +390,8 @@ window.addEventListener('blur', () => tabMenuEl.classList.add('hidden'));
 
 function showTabMenu(tab, x, y) {
   const tabId = tab.id;
-  const excluded = !!(tab.agentMarks?.length || tab.conductorExcluded);
+  // リモートタブは稼働状態を取れないので、司令塔にも司令塔の対象にもしない
+  const excluded = !!(tab.agentMarks?.length || tab.conductorExcluded || tab.remote);
   const isConductor = state.conductorTabId === tabId;
   // メニュー表示中にstateがreloadされるとタブのオブジェクトが入れ替わるので、実行時に引き直す
   const apply = (fn) => () => {
@@ -407,7 +408,7 @@ function showTabMenu(tab, x, y) {
     items.push([
       '🎛 このタブを司令塔にする',
       apply((t) => {
-        if (!t.agentMarks?.length && !t.conductorExcluded) state.conductorTabId = tabId;
+        if (!t.agentMarks?.length && !t.conductorExcluded && !t.remote) state.conductorTabId = tabId;
       }),
     ]);
   }
@@ -518,7 +519,7 @@ function attachHoverPreview(tabEl, tab) {
       // アクティブタブは本物が見えているのでプレビュー不要
       if (tab.id === state.activeTabId) return;
       const token = ++previewToken;
-      const text = await window.mimi.capturePane(tab.tmuxSession);
+      const text = tab.remote ? null : await window.mimi.capturePane(tab.tmuxSession);
       if (token !== previewToken) return; // すでにマウスが離れた
       showPreview(tabEl, tab, text);
     }, 350);
@@ -536,7 +537,7 @@ function attachHoverPreview(tabEl, tab) {
 function showPreview(tabEl, tab, text) {
   hidePreview();
   previewToken++; // hidePreviewのincrementと合わせトークンを進めておく
-  const info = claudeSessions[tab.tmuxSession];
+  const info = claudeSessions[localSession(tab)];
   const lines = (text ?? '').split('\n').filter((l, i, arr) => !(l === '' && arr[i + 1] === ''));
   const tail = lines.slice(-24).join('\n');
 
@@ -563,8 +564,8 @@ function showPreview(tabEl, tab, text) {
 
 // タブの稼働状態: 出力が流れている=考え中(スピナー) / Claudeセッションありで静止=応答待ち(●)
 function applyStatus(statusEl, tab) {
-  const info = claudeSessions[tab.tmuxSession];
-  const cmd = paneCommands[tab.tmuxSession];
+  const info = claudeSessions[localSession(tab)];
+  const cmd = paneCommands[localSession(tab)];
   const isShell = !cmd || SHELL_COMMANDS.includes(cmd);
   const isClaudeCmd = cmd === 'claude.exe' || cmd === 'claude' || cmd === 'node';
   if (!isShell && !isClaudeCmd) {
@@ -572,12 +573,12 @@ function applyStatus(statusEl, tab) {
     statusEl.className = 'tab-status proc';
     statusEl.textContent = '⚙';
     statusEl.title = `実行中: ${cmd}`;
-  } else if (isShell && shellProcsMap[tab.tmuxSession]) {
+  } else if (isShell && shellProcsMap[localSession(tab)]) {
     // シェルのままバックグラウンドジョブが動いてる
     statusEl.className = 'tab-status proc';
     statusEl.textContent = '⚙';
     statusEl.title = 'バックグラウンドジョブ実行中';
-  } else if (isClaudeCmd && workingMap[tab.tmuxSession]) {
+  } else if (isClaudeCmd && workingMap[localSession(tab)]) {
     statusEl.className = 'tab-status busy';
     statusEl.textContent = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
     statusEl.title = '考え中…';
@@ -609,7 +610,7 @@ setInterval(() => {
 
 // Claude Code コンテキスト使用率バッジ（statusline-tap.sh 経由の情報）
 function applyBadge(badgeEl, tab) {
-  const info = claudeSessions[tab.tmuxSession];
+  const info = claudeSessions[localSession(tab)];
   if (!info || info.pct == null) {
     badgeEl.textContent = '';
     badgeEl.className = 'tab-badge';
@@ -632,8 +633,8 @@ function updateBadges() {
     const statusEl = el.querySelector('.tab-status');
     if (statusEl) applyStatus(statusEl, tab);
     // 応答待ちを一度見たタブは薄く（既読）。再び作業が始まると未読に戻る
-    if (workingMap[tab.tmuxSession]) seenWaitingTabs.delete(tab.id);
-    const waiting = !!claudeSessions[tab.tmuxSession] && !workingMap[tab.tmuxSession];
+    if (workingMap[localSession(tab)]) seenWaitingTabs.delete(tab.id);
+    const waiting = !!claudeSessions[localSession(tab)] && !workingMap[localSession(tab)];
     el.classList.toggle(
       'seen',
       waiting && seenWaitingTabs.has(tab.id) && tab.id !== state.activeTabId
@@ -676,7 +677,9 @@ function createGroup() {
 function deleteGroup(group) {
   const tabsInGroup = state.tabs.filter((t) => t.groupId === group.id);
   if (tabsInGroup.length > 0) {
-    if (!confirm(`グループ「${group.name}」の ${tabsInGroup.length} 個のタブと tmux セッションをすべて終了します。よろしいですか？`)) return;
+    const remoteCount = tabsInGroup.filter((t) => t.remote).length;
+    const note = remoteCount > 0 ? `（リモートの ${remoteCount} 個は相手側の tmux セッションを残します）` : '';
+    if (!confirm(`グループ「${group.name}」の ${tabsInGroup.length} 個のタブと tmux セッションをすべて終了します${note}。よろしいですか？`)) return;
     for (const tab of tabsInGroup) removeTab(tab, true);
   }
   state.groups = state.groups.filter((g) => g.id !== group.id);
@@ -706,6 +709,14 @@ async function createTab(groupId) {
 }
 
 function closeTab(tab) {
+  if (tab.remote) {
+    // リモートのセッションは相手側の持ち物なので、タブを閉じても終了させない（detach だけ）
+    if (!confirm(`タブ「${tab.name}」を閉じます（${tab.remote.host} の tmux セッションは残ります）。よろしいですか？`)) return;
+    removeTab(tab, false);
+    save();
+    render();
+    return;
+  }
   if (!confirm(`タブ「${tab.name}」を閉じて tmux セッションも終了します。よろしいですか？`)) return;
   removeTab(tab, true);
   save();
@@ -719,7 +730,8 @@ function removeTab(tab, killSession) {
   if (state.conductorTabId === tab.id) delete state.conductorTabId;
   const entry = terms.get(tab.id);
   terms.delete(tab.id);
-  if (killSession) window.mimi.killTmuxSession(tab.tmuxSession);
+  // リモートのセッションは相手側の持ち物なので、タブを消しても終了させない
+  if (killSession && !tab.remote) window.mimi.killTmuxSession(tab.tmuxSession);
   if (entry) {
     window.mimi.ptyKill(tab.id);
     clearTimeout(entry.syncTimer);
@@ -771,15 +783,28 @@ function hideToast() {
 // 張り直し後に前面プロセスを確認し、claudeが死んでシェルに落ちていたらresumeを提案する
 const PLAIN_SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', '-zsh', '-bash']);
 
+// 稼働判定（claudeSessions 等）はローカルの tmux セッション名で引く。リモートタブは対象外
+function localSession(tab) {
+  return tab.remote ? undefined : tab.tmuxSession;
+}
+
+// main へ渡す ssh 先。ローカルタブは undefined。
+// remote はあるのに host が壊れているタブは '' を渡して main に断らせる（undefined だとローカルの同名セッションを触ってしまう）
+function remoteHostOf(tab) {
+  if (!tab.remote) return undefined;
+  return typeof tab.remote.host === 'string' ? tab.remote.host : '';
+}
+
 function knownClaudeSessionId(tab) {
-  return claudeSessions[tab.tmuxSession]?.sessionId || tab.claudeSessionId || null;
+  return claudeSessions[localSession(tab)]?.sessionId || tab.claudeSessionId || null;
 }
 
 const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 async function suggestResume(tab, reason) {
   // Claude以外のエージェント（agent-sessions登録あり）を優先: 登録は動作中だけ残るので、それが直近のもの
-  const agent = await window.mimi.agentSession(tab.tmuxSession);
+  // 登録（~/.mimiterm/agent-sessions）はローカルのセッション名で引くので、リモートタブでは見ない
+  const agent = tab.remote ? null : await window.mimi.agentSession(tab.tmuxSession);
   if (agent) {
     const cmd = agent.cwd ? `cd ${shellQuote(agent.cwd)} && ${agent.resumeCommand}` : agent.resumeCommand;
     showToast(`${reason}。前回の${agent.label}セッションを再開する？`, {
@@ -803,7 +828,12 @@ async function recoverActiveTab() {
   const tab = state.tabs.find((t) => t.id === state.activeTabId) || state.tabs[0];
   if (!tab) return;
   // Step1: 張り直す前にtmuxセッションの生死を見ておく（張り直すと -A で必ず出来てしまうため）
-  const before = await window.mimi.tmuxProbe(tab.tmuxSession);
+  const before = await window.mimi.tmuxProbe(tab.tmuxSession, remoteHostOf(tab));
+  if (before.exists === null) {
+    // リモートで ssh がつながらない。セッションが消えたとは限らないので、作り直さずに知らせる
+    showToast(`${tab.remote?.host} につながらないよ（${before.error}）`);
+    return;
+  }
   // Step2: クライアント側（xterm/pty）を丸ごと作り直して再attach
   const entry = terms.get(tab.id);
   terms.delete(tab.id);
@@ -834,9 +864,10 @@ async function recoverActiveTab() {
   showToast('ターミナルを張り直したよ');
   // Step3: attachが落ち着いてから前面プロセスを確認。claudeのはずがシェルに落ちていたら提案
   setTimeout(async () => {
-    const probe = await window.mimi.tmuxProbe(tab.tmuxSession);
+    const probe = await window.mimi.tmuxProbe(tab.tmuxSession, remoteHostOf(tab));
     if (!probe.exists || !PLAIN_SHELLS.has(probe.command)) return;
-    const agent = await window.mimi.agentSession(tab.tmuxSession);
+    // エージェントの再開情報（~/.mimiterm/agent-sessions）はローカルのセッション名で引くので、リモートタブでは見ない
+    const agent = tab.remote ? null : await window.mimi.agentSession(tab.tmuxSession);
     if (agent || knownClaudeSessionId(tab)) {
       suggestResume(tab, `ターミナルは張り直したけど、${agent ? agent.label : 'claude'}が動いてないみたい`);
     }
@@ -857,6 +888,7 @@ document.getElementById('diagnose-tab').addEventListener('click', async () => {
     tabName: tab.name,
     tmuxSession: tab.tmuxSession,
     claudeSessionId: knownClaudeSessionId(tab),
+    remoteHost: remoteHostOf(tab),
   });
   const dtab = {
     id: uid('t'),
@@ -895,7 +927,7 @@ pinnedTabButton.addEventListener('click', async () => {
     showToast(`「${pin.name}」タブに切り替えたよ`);
     // attachが落ち着いてから前面プロセスを確認。コマンドが動いていなければ再実行を提案
     setTimeout(async () => {
-      const probe = await window.mimi.tmuxProbe(existing.tmuxSession);
+      const probe = await window.mimi.tmuxProbe(existing.tmuxSession, remoteHostOf(existing));
       if (probe.exists && PLAIN_SHELLS.has(probe.command)) {
         showToast(`「${pin.name}」タブはあるけど、コマンドが動いてないみたい`, {
           label: `▶ ${pin.command}`,
@@ -938,7 +970,7 @@ document.getElementById('conductor-tab').addEventListener('click', async () => {
   if (existing) {
     await activateTab(existing.id);
     setTimeout(async () => {
-      const probe = await window.mimi.tmuxProbe(existing.tmuxSession);
+      const probe = await window.mimi.tmuxProbe(existing.tmuxSession, remoteHostOf(existing));
       if (probe.exists && PLAIN_SHELLS.has(probe.command)) {
         showToast('司令塔タブでClaudeが動いてないみたい', {
           label: '▶ 司令塔を起動',
@@ -999,6 +1031,7 @@ function syncRenderer(entry) {
 }
 
 function applySettings() {
+  applyRemoteButton();
   const bg = state.settings?.background;
   if (bg) {
     terminalsEl.style.backgroundImage = `url('file://${bg}')`;
@@ -1170,13 +1203,15 @@ async function activateTab(tabId, initialCommand) {
   entry.fit.fit();
   if (!entry.attached) {
     entry.attached = true;
-    await window.mimi.ptyCreate({
+    const created = await window.mimi.ptyCreate({
       tabId: tab.id,
       tmuxSession: tab.tmuxSession,
+      remoteHost: remoteHostOf(tab),
       cols: entry.term.cols,
       rows: entry.term.rows,
       initialCommand,
     });
+    if (created === 'invalid') showToast('リモート先の指定が正しくないので開けないよ');
   }
   entry.term.focus();
   updateSidebarActive();
@@ -1284,13 +1319,15 @@ async function consumePendingTabs() {
     } else {
       const entry = ensureTerm(tab);
       entry.attached = true;
-      await window.mimi.ptyCreate({
+      const created = await window.mimi.ptyCreate({
         tabId: tab.id,
         tmuxSession: tab.tmuxSession,
+        remoteHost: remoteHostOf(tab),
         cols: entry.term.cols,
         rows: entry.term.rows,
         initialCommand: initial,
       });
+      if (created === 'invalid') showToast('リモート先の指定が正しくないので開けないよ');
     }
     render();
   }
@@ -1355,7 +1392,7 @@ window.mimi.onClaudeSessions(({ sessions, activity, paneCommands: cmds, working,
   // 将来の claude --resume 用にセッションIDをタブへ永続化する
   let changed = false;
   for (const tab of state.tabs) {
-    const sid = sessions[tab.tmuxSession]?.sessionId;
+    const sid = sessions[localSession(tab)]?.sessionId;
     if (sid && tab.claudeSessionId !== sid) {
       tab.claudeSessionId = sid;
       changed = true;
@@ -1469,6 +1506,97 @@ async function importSession(s) {
 
 document.getElementById('import-session').addEventListener('click', openImportModal);
 
+// ---------- リモートのセッション ----------
+// settings.remoteHosts = [{ name: "mini", host: "user@100.x.x.x" }] を設定すると、
+// その ssh 先の tmux セッションを一覧から選んでタブで開ける（例: 別のマシンで常駐させている claude）
+function remoteHosts() {
+  const list = state.settings?.remoteHosts;
+  return Array.isArray(list) ? list.filter((h) => h && typeof h.host === 'string' && h.host) : [];
+}
+
+function applyRemoteButton() {
+  document.getElementById('open-remote').classList.toggle('hidden', remoteHosts().length === 0);
+}
+
+async function openRemoteModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'mimi-modal';
+  modal.innerHTML = '<div class="modal-title">リモートのセッションを開く 🌐</div>';
+  const listEl = document.createElement('div');
+  listEl.className = 'modal-list';
+  listEl.innerHTML = '<div class="modal-empty">接続して一覧を取ってるよ…</div>';
+  modal.appendChild(listEl);
+  overlay.appendChild(modal);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', esc);
+  };
+  function esc(e) {
+    if (e.key === 'Escape') close();
+  }
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', esc);
+  document.body.appendChild(overlay);
+
+  const hosts = remoteHosts();
+  const results = await Promise.all(hosts.map((h) => window.mimi.listRemoteSessions(h.host)));
+  listEl.innerHTML = '';
+  hosts.forEach((h, i) => {
+    const label = h.name || h.host;
+    const head = document.createElement('div');
+    head.className = 'modal-host';
+    head.textContent = `${label}（${h.host}）`;
+    listEl.appendChild(head);
+    const r = results[i];
+    if (!r.ok || r.sessions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'modal-empty';
+      empty.textContent = r.ok ? 'tmux のセッションがないよ' : `つながらなかったよ: ${r.error}`;
+      listEl.appendChild(empty);
+      return;
+    }
+    for (const sess of r.sessions) {
+      const item = document.createElement('div');
+      item.className = 'modal-item';
+      item.innerHTML = '<div class="modal-item-title"></div><div class="modal-item-meta"></div>';
+      item.querySelector('.modal-item-title').textContent = sess.name;
+      const meta = [relativeTime(sess.activity), sess.command, sess.attached ? '誰かが接続中' : null].filter(Boolean);
+      item.querySelector('.modal-item-meta').textContent = meta.join(' ・ ');
+      item.addEventListener('click', () => {
+        close();
+        openRemoteTab(h, sess.name);
+      });
+      listEl.appendChild(item);
+    }
+  });
+}
+
+function openRemoteTab(hostEntry, sessionName) {
+  // 同じセッションのタブが既にあれば、それを前に出す
+  const existing = state.tabs.find((t) => t.remote?.host === hostEntry.host && t.tmuxSession === sessionName);
+  if (existing) {
+    activateTab(existing.id);
+    return;
+  }
+  const tab = {
+    id: uid('t'),
+    name: `🌐 ${hostEntry.name || hostEntry.host}:${sessionName}`.slice(0, 32),
+    groupId: currentGroupId(),
+    tmuxSession: sessionName,
+    remote: { host: hostEntry.host },
+  };
+  state.tabs.push(tab);
+  save();
+  render();
+  activateTab(tab.id);
+}
+
+document.getElementById('open-remote').addEventListener('click', openRemoteModal);
+
 // ---------- クイックコマンドバー ----------
 // ボタンひとつでアクティブタブのターミナルへコマンド+Enterを流し込む
 
@@ -1492,7 +1620,7 @@ const SHELL_COMMANDS = ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', '-zsh', '-b
 function currentMode() {
   const tab = state.tabs.find((t) => t.id === state.activeTabId);
   if (!tab) return 'shell';
-  const cmd = paneCommands[tab.tmuxSession];
+  const cmd = paneCommands[localSession(tab)];
   if (!cmd || SHELL_COMMANDS.includes(cmd)) return 'shell';
   return 'claude';
 }
@@ -1676,7 +1804,7 @@ const HANDOFF_PROMPT =
 
 function renderStatusBar() {
   const tab = state.tabs.find((t) => t.id === state.activeTabId);
-  const info = tab ? claudeSessions[tab.tmuxSession] : null;
+  const info = tab ? claudeSessions[localSession(tab)] : null;
   const pct = info?.pct != null ? Math.round(info.pct) : null;
   document.getElementById('sb-tab').textContent = tab ? tab.name : '';
   const ctxEl = document.getElementById('sb-ctx');
@@ -1711,6 +1839,10 @@ function flashCopyResult(label, ok) {
 copyBtn.addEventListener('click', async (e) => {
   const tab = state.tabs.find((t) => t.id === state.activeTabId);
   if (!tab) return;
+  if (tab.remote) {
+    showToast('リモートのタブではまだコピーできないよ');
+    return;
+  }
   const res = await window.mimi.copyLastMessage({
     tmuxSession: tab.tmuxSession,
     mode: e.shiftKey ? 'full' : 'auto',
