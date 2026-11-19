@@ -1,0 +1,14 @@
+# MIMI-44: セキュリティ修正の PR を1本にまとめる。ふだんの更新（version updates）の PR は作らない。
+# 警告（Dependabot alerts）と修正 PR（security updates）はリポジトリの設定で有効にしてある。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # 0 にすると version updates の PR は作られない（セキュリティ修正の PR には効かない）
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
