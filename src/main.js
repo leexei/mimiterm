@@ -1033,7 +1033,7 @@ const ATTENTION_TEXT = {
   limit: '上限/エラーで止まってるよ',
   unsent: '入力欄に未送信の文字が残ってるよ',
 };
-const lastAttentionNotifyAt = new Map(); // tabId -> 時刻（同じタブの通知連打防止）
+const lastAttentionNotifyAt = new Map(); // `${tabId}:${kind}` -> 時刻（通知連打防止）
 
 function notifyAttention(tab, attention) {
   if (!attention) return;
@@ -1042,8 +1042,9 @@ function notifyAttention(tab, attention) {
   const watching = win && !win.isDestroyed() && win.isFocused() && state.activeTabId === tab.id;
   if (watching) return; // 見ているタブはダイアログが目の前にあるので鳴らさない
   const now = Date.now();
-  if (now - (lastAttentionNotifyAt.get(tab.id) || 0) < 60 * 1000) return;
-  lastAttentionNotifyAt.set(tab.id, now);
+  const key = `${tab.id}:${attention.kind}`; // 同じタブ・同じ種類の待ちだけ60秒抑止（種類が変われば鳴らす）
+  if (now - (lastAttentionNotifyAt.get(key) || 0) < 60 * 1000) return;
+  lastAttentionNotifyAt.set(key, now);
   const icon = ATTENTION_ICON[attention.kind] || '🙋';
   const detail = attention.message ? `\n${attention.message}` : '';
   notifyTab(tab, `${icon} ${ATTENTION_TEXT[attention.kind] || '入力を待ってるよ'}${detail}`);
