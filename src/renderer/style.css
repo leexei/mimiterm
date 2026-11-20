@@ -340,6 +340,8 @@ html, body, #app {
 
 #tab-menu button:hover {
   background: #45475a;
+}
+
 /* 人の入力を待っているタブ（attention）: 印を脈打たせ、タブ左端に色帯を出す */
 .attention-badge {
   font-size: 12px;
