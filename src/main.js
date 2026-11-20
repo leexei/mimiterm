@@ -1026,7 +1026,7 @@ function notifyTab(tab, body) {
 }
 
 // ---------- 入力待ち（attention）: Claude Code のフックが set_tab_attention で付ける ----------
-const { ATTENTION_ICON, unsentInputText } = require('./attention');
+const { ATTENTION_ICON, unsentInputText, dialogVisible } = require('./attention');
 const ATTENTION_TEXT = {
   permission: '許可ダイアログで待ってるよ',
   question: '質問の答えを待ってるよ',
@@ -1085,8 +1085,15 @@ async function scanUnsentInput(state, idleClaudeSessions) {
   for (const sess of idleClaudeSessions) {
     const tab = state.tabs.find((t) => t.tmuxSession === sess);
     if (!tab) continue;
-    if (tab.attention && tab.attention.kind !== 'unsent') continue;
+    const kind = tab.attention?.kind;
+    if (kind === 'limit') continue;
     const text = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess]);
+    if (kind === 'permission' || kind === 'question') {
+      // Esc での取り消し等はフックが来ないので、ダイアログが画面から消えていたら外す（付与直後は除く）
+      const age = Date.now() - new Date(tab.attention.since).getTime();
+      if (text && !dialogVisible(text) && age > 15 * 1000) setAttention(tab.id, null);
+      continue;
+    }
     const unsent = text ? unsentInputText(text) : null;
     if (!unsent) {
       unsentSince.delete(sess);

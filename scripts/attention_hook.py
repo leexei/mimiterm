@@ -64,7 +64,7 @@ def read_mark():
 
 def write_mark(m):
     MARK_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = MARK.with_suffix('.tmp')
+    tmp = MARK_DIR / f'.{sess}.{os.getpid()}.tmp'  # 同時に走るフック同士で衝突しないよう pid 別
     tmp.write_text(json.dumps(m))
     tmp.replace(MARK)
 
@@ -108,7 +108,9 @@ def tool_summary(ev):
 
 try:
     if name == 'PermissionRequest':
-        set_wait('permission', tool_summary(ev), DELAY_SEC)
+        # AskUserQuestion は PermissionRequest と PreToolUse の両方が来る（実測）。質問として PreToolUse 側で扱う
+        if ev.get('tool_name') != 'AskUserQuestion':
+            set_wait('permission', tool_summary(ev), DELAY_SEC)
     elif name == 'PreToolUse' and ev.get('tool_name') == 'AskUserQuestion':
         qs = (ev.get('tool_input') or {}).get('questions') or [{}]
         set_wait('question', str(qs[0].get('question', '質問があります')), DELAY_SEC)
@@ -116,8 +118,8 @@ try:
         nt = ev.get('notification_type', '')
         msg = ev.get('message', '')
         if nt == 'permission_prompt':
-            m = read_mark()
-            if not (m and m.get('sent')):
+            # 約6秒後の保険。すでに印（付与待ち含む）があれば重ねない（AskUserQuestion でも来る・実測）
+            if not read_mark():
                 set_wait('permission', msg, 0)
         elif nt in ('elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input'):
             set_wait('question', msg, 0)
@@ -129,7 +131,11 @@ try:
         err = ev.get('error', 'unknown')
         detail = ev.get('last_assistant_message') or ev.get('error_details') or ''
         set_wait('limit', f"{err}: {str(detail)[:150]}", 0)
-    elif name in ('UserPromptSubmit', 'Stop', 'SessionEnd'):
+    elif name == 'UserPromptSubmit':
+        # 送信＝人が戻ってきた。MimiTerm 側が付けた ✍️（未送信）もここで外す
+        clear(force=True)
+        call('set_tab_attention', {'tab': sess, 'kind': ''})
+    elif name in ('Stop', 'SessionEnd'):
         clear(force=True)
     elif name in ('PostToolUse', 'PostToolUseFailure', 'PermissionDenied'):
         clear()
