@@ -317,6 +317,7 @@ function wirePty(tabId, p) {
 ipcMain.on('pty:input', (_e, { tabId, data }) => {
   const p = ptys.get(tabId);
   if (p) p.write(data);
+  clearAttentionOnKey(tabId, data);
 });
 
 ipcMain.on('pty:resize', (_e, { tabId, cols, rows }) => {
@@ -1024,6 +1025,91 @@ function notifyTab(tab, body) {
   n.show();
 }
 
+// ---------- 入力待ち（attention）: Claude Code のフックが set_tab_attention で付ける ----------
+const { ATTENTION_ICON, unsentInputText } = require('./attention');
+const ATTENTION_TEXT = {
+  permission: '許可ダイアログで待ってるよ',
+  question: '質問の答えを待ってるよ',
+  limit: '上限/エラーで止まってるよ',
+  unsent: '入力欄に未送信の文字が残ってるよ',
+};
+const lastAttentionNotifyAt = new Map(); // tabId -> 時刻（同じタブの通知連打防止）
+
+function notifyAttention(tab, attention) {
+  if (!attention) return;
+  const state = loadState();
+  if (state.settings?.notifications === false) return;
+  const watching = win && !win.isDestroyed() && win.isFocused() && state.activeTabId === tab.id;
+  if (watching) return; // 見ているタブはダイアログが目の前にあるので鳴らさない
+  const now = Date.now();
+  if (now - (lastAttentionNotifyAt.get(tab.id) || 0) < 60 * 1000) return;
+  lastAttentionNotifyAt.set(tab.id, now);
+  const icon = ATTENTION_ICON[attention.kind] || '🙋';
+  const detail = attention.message ? `\n${attention.message}` : '';
+  notifyTab(tab, `${icon} ${ATTENTION_TEXT[attention.kind] || '入力を待ってるよ'}${detail}`);
+}
+
+function setAttention(tabId, attention) {
+  const state = loadState();
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (!tab) return null;
+  const prev = tab.attention?.kind ?? null;
+  if ((attention?.kind ?? null) === prev) return tab;
+  if (attention) tab.attention = attention;
+  else delete tab.attention;
+  saveState(state);
+  if (win && !win.isDestroyed()) win.webContents.send('state:reload', state);
+  return tab;
+}
+
+// しぇい様がそのタブで Enter / Esc / 数字（選択肢）を押したら、ダイアログ系の待ちは解消とみなす。
+// フック側（PostToolUse 等）でも外すが、Esc キャンセル等フックが来ない経路の保険。
+// フォーカス通知（\e[I / \e[O）はキー操作ではないので無視する。
+function clearAttentionOnKey(tabId, data) {
+  if (!data || data === '\x1b[I' || data === '\x1b[O') return;
+  const answered = data.includes('\r') || data === '\x1b' || /^[1-9]$/.test(data);
+  if (!answered) return;
+  const tab = loadState().tabs.find((t) => t.id === tabId);
+  const kind = tab?.attention?.kind;
+  if (kind === 'permission' || kind === 'question' || kind === 'limit' || kind === 'unsent') {
+    setAttention(tabId, null);
+  }
+}
+
+const UNSENT_SCAN_EVERY_TICKS = 20; // 1.5秒×20 = 30秒ごと
+const UNSENT_MIN_MS = 3 * 60 * 1000; // 3分残っていたら印を付ける
+const unsentSince = new Map(); // tmuxSession -> { text, since }
+let unsentTick = 0;
+
+async function scanUnsentInput(state, idleClaudeSessions) {
+  for (const sess of idleClaudeSessions) {
+    const tab = state.tabs.find((t) => t.tmuxSession === sess);
+    if (!tab) continue;
+    if (tab.attention && tab.attention.kind !== 'unsent') continue;
+    const text = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess]);
+    const unsent = text ? unsentInputText(text) : null;
+    if (!unsent) {
+      unsentSince.delete(sess);
+      if (tab.attention?.kind === 'unsent') setAttention(tab.id, null);
+      continue;
+    }
+    const seen = unsentSince.get(sess);
+    if (!seen || seen.text !== unsent) {
+      unsentSince.set(sess, { text: unsent, since: Date.now() });
+      continue;
+    }
+    if (!tab.attention && Date.now() - seen.since >= UNSENT_MIN_MS) {
+      const attention = {
+        kind: 'unsent',
+        since: new Date(seen.since).toISOString(),
+        message: unsent.slice(0, 60),
+      };
+      const t = setAttention(tab.id, attention);
+      if (t) notifyAttention(t, attention);
+    }
+  }
+}
+
 const execFileP = (cmd, args, opts = {}) =>
   new Promise((resolve) => execFile(cmd, args, opts, (err, stdout) => resolve(err ? null : String(stdout))));
 
@@ -1325,7 +1411,36 @@ setInterval(async () => {
       }
     }
   }
-  if (app.dock) {
+  // 未送信入力のスキャン（30秒ごと・作業していないClaudeタブだけ）
+  unsentTick = (unsentTick + 1) % UNSENT_SCAN_EVERY_TICKS;
+  if (unsentTick === 0) {
+    const idle = Object.keys(activity).filter((sess) => {
+      const cmd = paneCommands[sess];
+      return !!sessions[sess] && !!cmd && !SHELL_CMDS.includes(cmd) && !working[sess];
+    });
+    await scanUnsentInput(state, idle);
+  }
+
+  // 人の入力を待っているタブ（attention）は Dock バッジ・メニューで最優先に出す
+  const attentionTabs = state.tabs.filter((t) => t.attention);
+  if (app.dock && attentionTabs.length) {
+    app.dock.setBadge(`🙋${attentionTabs.length}`);
+    app.dock.setMenu(
+      Menu.buildFromTemplate(
+        attentionTabs.map((t) => ({
+          label: `${ATTENTION_ICON[t.attention.kind] || '🙋'} ${t.name}`,
+          click: () => {
+            if (win && !win.isDestroyed()) {
+              if (win.isMinimized()) win.restore();
+              win.show();
+              win.focus();
+              win.webContents.send('tab:activate', t.id);
+            }
+          },
+        }))
+      )
+    );
+  } else if (app.dock) {
     app.dock.setBadge(waitingCount > 0 ? String(waitingCount) : '');
     // Dockアイコン右クリックで応答待ちタブの一覧→選択でジャンプ
     const waitingTabs = state.tabs.filter((t) => {
@@ -1398,6 +1513,7 @@ if (!app.requestSingleInstanceLock()) {
       getClaudeSessions: collectClaudeSessions,
       browser: browserOps,
       clipboard: { write: (text) => clipboard.writeText(text) },
+      notifyAttention: (tab, attention) => notifyAttention(tab, attention),
       getTabRunState: tabRunState,
       getConductorEvents: latestConductorEvents,
       mutateState,

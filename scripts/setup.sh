@@ -180,10 +180,58 @@ print('次: MimiTermのサイドバー「🎛 司令塔」を押すと司令塔�
 EOF
 }
 
+step_attention() {
+  echo "== attention: 入力待ち（許可ダイアログ・質問・上限停止）をタブに印で出すhookを登録 =="
+  python3 - "$REPO_DIR" <<'EOF'
+import json, os, shutil, sys, time
+repo = sys.argv[1]
+p = os.path.expanduser('~/.claude/settings.json')
+d = json.load(open(p)) if os.path.exists(p) else {}
+cmd = f'bash {repo}/scripts/attention-hook.sh'
+# (イベント, matcher)。None は matcher なし（全件）
+targets = [
+    ('PermissionRequest', None),
+    ('PreToolUse', 'AskUserQuestion'),
+    ('Notification', 'permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|quota_auto_resume_stale|quota_auto_resume_fired'),
+    ('StopFailure', None),
+    ('UserPromptSubmit', None),
+    ('PostToolUse', None),
+    ('PostToolUseFailure', None),
+    ('PermissionDenied', None),
+    ('Stop', None),
+    ('SessionEnd', None),
+]
+hooks = d.setdefault('hooks', {})
+added = []
+for event, matcher in targets:
+    entries = hooks.setdefault(event, [])
+    if any(cmd in h.get('command', '') for e in entries for h in e.get('hooks', [])):
+        continue
+    entry = {'hooks': [{'type': 'command', 'command': cmd, 'async': True}]}
+    if matcher:
+        entry = {'matcher': matcher, **entry}
+    entries.append(entry)
+    added.append(event)
+if not added:
+    print('OK: 既に登録済み')
+else:
+    backup = f"{p}.attention-backup-{time.strftime('%Y%m%d%H%M%S')}"
+    if os.path.exists(p):
+        shutil.copy(p, backup)
+        print(f'バックアップ: {backup}')
+    tmp = p + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    print('OK: 登録しました（新しいセッションから有効）:', ', '.join(added))
+EOF
+}
+
 case "${1:-all}" in
   deps) step_deps ;;
   autoschedule) step_autoschedule ;;
   conductor) step_conductor ;;
+  attention) step_attention ;;
   build) step_build ;;
   app) step_app ;;
   statusline) step_statusline ;;
@@ -196,5 +244,5 @@ case "${1:-all}" in
     echo
     echo "次: MimiTerm.app を起動してから 'scripts/setup.sh mcp' を実行してください"
     ;;
-  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|autoschedule|conductor|all>"; exit 1 ;;
+  *) echo "Usage: setup.sh <deps|build|app|statusline|mcp|autoschedule|conductor|attention|all>"; exit 1 ;;
 esac

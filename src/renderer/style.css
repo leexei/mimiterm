@@ -340,6 +340,23 @@ html, body, #app {
 
 #tab-menu button:hover {
   background: #45475a;
+/* 人の入力を待っているタブ（attention）: 印を脈打たせ、タブ左端に色帯を出す */
+.attention-badge {
+  font-size: 12px;
+  animation: attention-pulse 1.6s ease-in-out infinite;
+}
+
+.tab.needs-attention {
+  box-shadow: inset 3px 0 0 #fab387;
+}
+
+@keyframes attention-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attention-badge { animation: none; }
 }
 
 .schedule-chip {

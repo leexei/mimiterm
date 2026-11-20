@@ -258,6 +258,27 @@ function renderTab(tab, group, sectionKey) {
   tabEl.appendChild(status);
   applyStatus(status, tab);
 
+  // 人の入力を待っている印（フックが付ける。バッジとは別枠なので 🤔 等を上書きしない）
+  if (tab.attention) {
+    const icons = { permission: '🙋', question: '🙋', limit: '⛔', unsent: '✍️' };
+    const labels = {
+      permission: '許可ダイアログで待機中',
+      question: '質問の答えを待機中',
+      limit: '上限/エラーで停止中',
+      unsent: '入力欄に未送信の文字あり',
+    };
+    const att = document.createElement('span');
+    att.className = `attention-badge ${tab.attention.kind}`;
+    att.textContent = icons[tab.attention.kind] || '🙋';
+    const since = tab.attention.since
+      ? new Date(tab.attention.since).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    att.title = `${labels[tab.attention.kind] || '入力待ち'}${since ? `（${since}〜）` : ''}` +
+      (tab.attention.message ? `\n${tab.attention.message}` : '');
+    tabEl.appendChild(att);
+    tabEl.classList.add('needs-attention');
+  }
+
   if (tab.badgeEmoji) {
     const emoji = document.createElement('span');
     emoji.className = 'emoji-badge';

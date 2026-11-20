@@ -14,6 +14,7 @@ Claude Code ネイティブなターミナル。タブを日付グループで�
 - **通知**: タブが「考え中→応答待ち」に変わった時と、コンテキスト使用率が70%を超えた時にmacOS通知（クリックでそのタブへジャンプ）。Dockアイコンに応答待ちタブ数のバッジを表示。フォーカス中のタブの応答待ち通知は抑制される
 - **タブの自動整理**（任意・`setup.sh autoschedule` で有効化）: Claude Code の Stop hook で応答文から「別日にやる」意図を検出し、日付が読み取れれば再開予定日を設定してその日付グループへ自動移動、曖昧なら 🤔 バッジのみ付与。判定は正規表現のみで追加のAI呼び出しは行わない
 - **予定日の自動区切り**: 各グループ内のタブを再開予定日で 今日 / 明日 / 今週（明後日〜7日後） / それ以降 / 未定 に区切って表示。日付が変われば自動で移り、予定日を過ぎたタブは「今日」の先頭に赤で出る。並びは表示だけで、タブの保存データは変えない（予定日つきのタブが無いグループには見出しを出さない）
+- **入力待ちの印**（任意・`setup.sh attention` で有効化）: Claude Code のフックで、許可ダイアログ・AskUserQuestion の質問（🙋）、使用上限やAPIエラーでの停止（⛔）をタブに脈打つ印で表示し、そのタブを見ていなければ macOS 通知を1回出す。入力欄に未送信の文字が3分残ったタブ（✍️）も検知する。印は既存の絵文字バッジとは別枠。回答・入力・Enter/Esc で自動的に消える。Dock バッジとDockメニューにも入力待ちタブを最優先で出す
 - **今日パネル**: 今日の予定と空き時間、再開予定日（`schedule_tab`）が来たタブを表示。予定は `~/.mimiterm/calendar-cache.json` から読む（後述。アプリ自身はカレンダーへアクセスしない）。空き時間は 09:00〜18:00 の窓（現在時刻以降）を基準に算出（現状は固定値）
 - **クイックコマンドバー**: ワンクリックでコマンド注入。Claude実行中/シェルでセット自動切替
 - **セッションインポート**: 過去のClaude Codeセッションを選んで `claude --resume` 付きタブを生成
@@ -52,6 +53,7 @@ scripts/setup.sh mcp        # アプリ初回起動後にMCP登録（トーク�
 | statusline | `~/.claude/settings.json` のstatusLineをtapに変更 | 変更内容: (1) 初回のみ `settings.json.mimiterm-backup` を作成 (2) 既存statuslineがあればチェーン先（`~/.mimiterm/statusline-chain.sh`）に退避して表示を維持 (3) statusLine.commandをtapに書き換え |
 | mcp | `claude mcp add --scope user` でMimiTerm MCPを登録 | user scopeのMCP設定に `mimiterm` が追加される |
 | autoschedule（任意） | `~/.claude/settings.json` の `hooks.Stop` にタブ自動整理フックを追加 | 応答完了時にMimiTermのタブが自動で日付グループへ移動する。`all` には含まれないので必要な人だけ実行 |
+| attention（任意） | `~/.claude/settings.json` に入力待ち検知フック（PermissionRequest / PreToolUse(AskUserQuestion) / Notification / StopFailure と解除用の UserPromptSubmit / PostToolUse 等）を async で追加 | 実行前に `settings.json.attention-backup-<日時>` を作成。観測ログ（イベント名・時刻・tool_name 等のみ、入力本文は記録しない）を `~/.mimiterm/attention/events.log` に残す |
 
 | conductor（任意） | 司令塔タブ用のhook（`Notification` / `Stop` / `PreToolUse`）を `~/.claude/settings.json` に追加し、`~/.mimiterm/conductor/` に指示文とスクリプトへのリンクを置く | 司令塔タブが登録されている間だけ、各タブのイベントが `~/.mimiterm/conductor/events.jsonl` に書かれる。`all` には含まれない |
 

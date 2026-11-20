@@ -84,11 +84,14 @@ function tabSummary(state, tab, claudeSessions) {
     agentMarks: tab.agentMarks ?? [],
     conductor: state.conductorTabId === tab.id,
     conductorExcluded: isConductorExcluded(tab),
+    attention: tab.attention ?? null,
   };
 }
 
 // ---------- schedule_tab のカレンダー作業ブロック ----------
 const TAB_REF_DESC = 'タブの参照（タブID / tmuxセッション名 / タブ名のいずれか）';
+// 入力待ちの種類（main.js / renderer と共通）
+const ATTENTION_KINDS = ['permission', 'question', 'limit', 'unsent'];
 
 const TOOLS = [
   {
@@ -367,6 +370,45 @@ const TOOLS = [
         if (state.conductorTabId === tab.id) delete state.conductorTabId;
         return { ok: true, tab: tab.name, conductorExcluded: true };
       }),
+  },
+  {
+    name: 'set_tab_attention',
+    description:
+      'タブが人の入力を待っている印（バッジとは別枠）を付ける・外す。Claude Code のフックから呼ぶ想定。' +
+      'kind: permission=許可ダイアログ / question=選択肢の質問 / limit=使用上限・APIエラーで停止 / unsent=入力欄に未送信の文字。空文字で解除。' +
+      '付いた瞬間、そのタブを見ていなければ macOS 通知を1回出す。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tab: { type: 'string', description: TAB_REF_DESC },
+        kind: { type: 'string', enum: ['', ...ATTENTION_KINDS] },
+        message: { type: 'string', description: '通知・ツールチップに出す短い説明（任意）' },
+      },
+      required: ['tab', 'kind'],
+      additionalProperties: false,
+    },
+    handler: (args, ctx) => {
+      const res = ctx.mutateState((state) => {
+        const tab = resolveTab(state, args.tab);
+        if (!tab) throw new Error(`タブが見つかりません: ${args.tab}`);
+        const prev = tab.attention?.kind ?? null;
+        if (!args.kind) {
+          delete tab.attention;
+        } else if (prev !== args.kind) {
+          tab.attention = {
+            kind: args.kind,
+            since: new Date().toISOString(),
+            message: args.message ? String(args.message).slice(0, 200) : null,
+          };
+        }
+        return { tab, prev, attention: tab.attention ?? null };
+      });
+      // 状態が「無し/別種 → この種類」に変わった時だけ通知（同じ待ちで連打しない）
+      if (args.kind && res.prev !== args.kind && ctx.notifyAttention) {
+        ctx.notifyAttention(res.tab, res.attention);
+      }
+      return { ok: true, tab: res.tab.name, attention: res.attention, changed: res.prev !== (args.kind || null) };
+    },
   },
   {
     name: 'schedule_tab',
@@ -689,5 +731,5 @@ function startMcpServer(ctx) {
   return cfg;
 }
 
-module.exports = { startMcpServer };
+module.exports = { startMcpServer, ATTENTION_KINDS };
 
