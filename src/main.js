@@ -1089,7 +1089,7 @@ async function scanUnsentInput(state, idleClaudeSessions) {
     if (!tab) continue;
     const kind = tab.attention?.kind;
     if (kind === 'limit') continue;
-    const text = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess]);
+    const text = await execFileP(TMUX, ['capture-pane', '-e', '-p', '-t', sess]); // -e: 薄い文字（入力候補）を見分けるため
     // フックが来ない待ち（導入前から開いていたダイアログ・フック非対応のダイアログ）の保険:
     // 画面にダイアログが2回続けて（30秒以上）出ていたら印を付ける
     if (!kind && text && dialogVisible(text)) {
