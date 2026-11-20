@@ -1080,6 +1080,7 @@ function clearAttentionOnKey(tabId, data) {
 const UNSENT_SCAN_EVERY_TICKS = 20; // 1.5秒×20 = 30秒ごと
 const UNSENT_MIN_MS = 3 * 60 * 1000; // 3分残っていたら印を付ける
 const unsentSince = new Map(); // tmuxSession -> { text, since }
+const dialogSince = new Map(); // tmuxSession -> ダイアログを最初に見た時刻（フックが来ない待ちの保険）
 let unsentTick = 0;
 
 async function scanUnsentInput(state, idleClaudeSessions) {
@@ -1089,6 +1090,24 @@ async function scanUnsentInput(state, idleClaudeSessions) {
     const kind = tab.attention?.kind;
     if (kind === 'limit') continue;
     const text = await execFileP(TMUX, ['capture-pane', '-p', '-t', sess]);
+    // フックが来ない待ち（導入前から開いていたダイアログ・フック非対応のダイアログ）の保険:
+    // 画面にダイアログが2回続けて（30秒以上）出ていたら印を付ける
+    if (!kind && text && dialogVisible(text)) {
+      const firstSeen = dialogSince.get(sess);
+      if (!firstSeen) {
+        dialogSince.set(sess, Date.now());
+      } else if (Date.now() - firstSeen >= 25 * 1000) {
+        const attention = {
+          kind: /Enter to select/.test(text) ? 'question' : 'permission',
+          since: new Date(firstSeen).toISOString(),
+          message: '画面にダイアログが出たまま止まっています',
+        };
+        const t = setAttention(tab.id, attention);
+        if (t) notifyAttention(t, attention);
+      }
+      continue;
+    }
+    dialogSince.delete(sess);
     if (kind === 'permission' || kind === 'question') {
       // Esc での取り消し等はフックが来ないので、ダイアログが画面から消えていたら外す（付与直後は除く）
       const age = Date.now() - new Date(tab.attention.since).getTime();
