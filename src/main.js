@@ -1085,11 +1085,11 @@ let unsentTick = 0;
 
 async function scanUnsentInput(state, idleClaudeSessions) {
   for (const sess of idleClaudeSessions) {
-    const tab = state.tabs.find((t) => t.tmuxSession === sess);
+    const tab = state.tabs.find((t) => !t.remote && t.tmuxSession === sess); // リモートタブは対象外
     if (!tab) continue;
     const kind = tab.attention?.kind;
     if (kind === 'limit') continue;
-    const text = await execFileP(TMUX, ['capture-pane', '-e', '-p', '-t', sess]); // -e: 薄い文字（入力候補）を見分けるため
+    const text = await tmuxExecP(['capture-pane', '-e', '-p', '-t', sess]); // -e: 薄い文字（入力候補）を見分けるため。-u（UTF-8）は tmuxExecP が付ける
     // フックが来ない待ち（導入前から開いていたダイアログ・フック非対応のダイアログ）の保険:
     // 画面にダイアログが2回続けて（30秒以上）出ていたら印を付ける
     if (!kind && text && dialogVisible(text)) {
