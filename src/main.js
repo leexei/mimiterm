@@ -1063,7 +1063,7 @@ function setAttention(tabId, attention) {
   return tab;
 }
 
-// しぇい様がそのタブで Enter / Esc / 数字（選択肢）を押したら、ダイアログ系の待ちは解消とみなす。
+// ユーザーがそのタブで Enter / Esc / 数字（選択肢）を押したら、ダイアログ系の待ちは解消とみなす。
 // フック側（PostToolUse 等）でも外すが、Esc キャンセル等フックが来ない経路の保険。
 // フォーカス通知（\e[I / \e[O）はキー操作ではないので無視する。
 function clearAttentionOnKey(tabId, data) {
