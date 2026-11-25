@@ -1077,6 +1077,51 @@ function clearAttentionOnKey(tabId, data) {
   }
 }
 
+// ---------- 入力待ちを司令塔タブへ1行で知らせる（src/attention-relay.js） ----------
+const { planRelay, targetReady } = require('./attention-relay');
+const ATTENTION_DIR = path.join(STATE_DIR, 'attention');
+const RELAY_LOG = path.join(ATTENTION_DIR, 'relay.jsonl');
+const relayTracked = new Map();
+let relayQueue = [];
+let relayBusy = false;
+
+function logRelay(events) {
+  if (!events.length) return;
+  const ts = new Date().toISOString();
+  try {
+    fs.mkdirSync(ATTENTION_DIR, { recursive: true });
+    fs.appendFileSync(RELAY_LOG, events.map((e) => JSON.stringify({ ts, ...e })).join('\n') + '\n');
+  } catch {}
+}
+
+async function relayAttention() {
+  if (relayBusy) return;
+  relayBusy = true;
+  try {
+    const { target, lines, events } = planRelay(loadState(), relayTracked, Date.now());
+    logRelay(events);
+    if (!target) {
+      relayQueue = [];
+      return;
+    }
+    relayQueue.push(...lines);
+    if (!relayQueue.length || target.remote) return;
+    const pane = await tmuxExecP(['capture-pane', '-e', '-p', '-t', target.tmuxSession]);
+    if (!targetReady(pane)) {
+      return; // ダイアログ表示中・入力中は待つ（溜めた分は次の機会にまとめて送る）
+    }
+    const text = relayQueue.join(' ｜ ');
+    relayQueue = [];
+    // 文字と Enter を同時に送ると貼り付け扱いで Enter が消えるので、分けて送る
+    await tmuxExecP(['send-keys', '-t', target.tmuxSession, '-l', text]);
+    await new Promise((r) => setTimeout(r, 800));
+    await tmuxExecP(['send-keys', '-t', target.tmuxSession, 'Enter']);
+    logRelay([{ event: 'sent', to: target.id, text }]);
+  } finally {
+    relayBusy = false;
+  }
+}
+
 const UNSENT_SCAN_EVERY_TICKS = 20; // 1.5秒×20 = 30秒ごと
 const UNSENT_MIN_MS = 3 * 60 * 1000; // 3分残っていたら印を付ける
 const unsentSince = new Map(); // tmuxSession -> { text, since }
@@ -1447,6 +1492,8 @@ setInterval(async () => {
     });
     await scanUnsentInput(state, idle);
   }
+  // 入力待ちの司令塔への中継（3秒ごと）
+  if (unsentTick % 2 === 0) relayAttention().catch(() => {});
 
   // 人の入力を待っているタブ（attention）は Dock バッジ・メニューで最優先に出す
   const attentionTabs = state.tabs.filter((t) => t.attention);
